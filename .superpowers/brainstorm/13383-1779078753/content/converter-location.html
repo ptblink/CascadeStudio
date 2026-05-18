@@ -1,0 +1,65 @@
+<h2>Where should STEP analysis/conversion run?</h2>
+<p class="subtitle">This affects privacy, dependency risk, and how deeply we can inspect assembly labels.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)" style="border-color:#4CAF50">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>In-browser worker using OpenCascade.js <span class="badge">Recommended</span></h3>
+      <p>Add converter logic near current STEP import path, inside <code>cascade-core</code> worker APIs.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Fits CascadeStudio architecture: CAD parsing already happens in Web Worker + WASM.</li>
+          <li>Private/offline: user STEP files do not leave browser.</li>
+          <li>Reuses existing build/deploy model; no server dependency for GitHub Pages/Vercel static app.</li>
+          <li>Generated code can reference same <code>externalShapes</code> state immediately.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Limited by OpenCascade.js bindings available in browser.</li>
+          <li>Heavy assembly traversal may block worker longer; needs progress/errors.</li>
+          <li>Harder to use native OCCT/XDE tools if bindings are missing.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Local CLI converter</h3>
+      <p>Provide a Node/native script that reads STEP and outputs a CascadeStudio project/code package.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Can use stronger native OCCT/XDE tooling if browser bindings fall short.</li>
+          <li>Better for batch conversion and very large assemblies.</li>
+          <li>Keeps heavy processing outside interactive browser session.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Does not fit casual web app workflow; users must install/run tools.</li>
+          <li>More packaging/support burden across macOS/Windows/Linux.</li>
+          <li>Generated project still needs import path compatibility with browser app.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Hosted conversion service</h3>
+      <p>Upload STEP to backend service, return generated CascadeStudio JS/project.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Backend can use native libraries and more CPU/memory.</li>
+          <li>Small browser code; easy to update conversion logic centrally.</li>
+          <li>Can add queueing, batch jobs, and cached conversions later.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Privacy/IP concern for user CAD files.</li>
+          <li>Breaks static/offline app promise and adds hosting cost.</li>
+          <li>Needs auth, upload limits, storage lifecycle, security hardening.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>

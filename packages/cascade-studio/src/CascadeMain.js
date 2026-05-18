@@ -23,6 +23,12 @@ class DockviewContainer {
     panelApi.onDidDimensionsChange(() => {
       this._resizeCallbacks.forEach(cb => cb());
     });
+    panelApi.onDidActiveChange((event) => {
+      if (event.isActive) {
+        this._activeCallbacks?.forEach(cb => cb());
+      }
+    });
+    this._activeCallbacks = [];
   }
 
   get width()  { return this.element.offsetWidth; }
@@ -35,6 +41,8 @@ class DockviewContainer {
   on(event, callback) {
     if (event === 'resize') {
       this._resizeCallbacks.push(callback);
+    } else if (event === 'active') {
+      this._activeCallbacks.push(callback);
     }
   }
 
@@ -89,6 +97,7 @@ class CascadeStudioApp {
     window.loadProject = () => this.loadProject();
     window.loadFiles = (id) => this.loadFiles(id);
     window.clearExternalFiles = () => this.clearExternalFiles();
+    window.generateSTEPImportCode = (fileName) => this.generateSTEPImportCode(fileName);
 
     // Install the programmatic API
     this.api = new CascadeAPI(this);
@@ -131,10 +140,10 @@ class CascadeStudioApp {
         console.error(payload);
       });
       this.engine.on('Progress', (payload) => {
-        let el = this.console._consoleContainer?.parentElement?.lastElementChild?.lastElementChild;
-        if (el) {
-          el.innerText = "> Generating Model" + ".".repeat(payload.opNumber) + ((payload.opType) ? " (" + payload.opType + ")" : "");
-        }
+        this.console.updateProgress('model', 'Generating Model', payload.opType || '', null, { spinner: payload.opNumber });
+      });
+      this.engine.on('importProgress', (payload) => {
+        this.console.updateProgress('import', payload.label || 'Importing files', payload.detail || '', payload.percent, payload);
       });
       this.engine.on('resetWorking', () => { window.workerWorking = false; });
 
@@ -149,6 +158,16 @@ class CascadeStudioApp {
       this.engine.on('loadFiles', (extFiles) => {
         console.log("Storing loaded files!");
         this.console.goldenContainer.setState(extFiles);
+      });
+
+      // Wire up automatic STEP JS generation after import.
+      this.engine.on('generatedSTEPImportCode', ({ fileName, code }) => {
+        if (code) {
+          this.openCodeTab(code, fileName + ' import');
+          console.log("Opened new editor tab for imported STEP file " + fileName);
+          console.log("Calculating geometry from imported STEP tab...");
+          setTimeout(() => this.editor.evaluateCode(false, { preserveConsole: true }), 0);
+        }
       });
 
       // Wire up file saving callback
@@ -433,6 +452,47 @@ class CascadeStudioApp {
   loadFiles(fileElementID = "files") {
     let files = document.getElementById(fileElementID).files;
     this.engine.importFiles(files);
+  }
+
+  /** Open code in a new editor tab and make it active. */
+  openCodeTab(code, title = '* Untitled') {
+    if (!this._dockviewApi) {
+      this.editor.setCode(code);
+      return null;
+    }
+    const safeTitle = title.replace(/[\\/:*?"<>|]/g, '_');
+    const id = 'codeEditor-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    const referencePanel = this._dockviewApi.getPanel?.('codeEditor') || this._dockviewApi.activePanel;
+    const panel = this._dockviewApi.addPanel({
+      id,
+      component: 'codeEditor',
+      title: safeTitle,
+      params: { code },
+      position: referencePanel ? { referencePanel, direction: 'within' } : undefined
+    });
+    panel.api.setActive();
+    return panel;
+  }
+
+  /** Generate CascadeStudio JS for an imported STEP file and place it in a new editor tab. */
+  async generateSTEPImportCode(fileName) {
+    let files = this.console.goldenContainer.getState() || {};
+    let stepFiles = Object.keys(files).filter(name => /\.(step|stp)$/i.test(name));
+    if (!stepFiles.length && this.engine.getExternalFileNames) {
+      let importedNames = await this.engine.getExternalFileNames();
+      stepFiles = (importedNames || []).filter(name => /\.(step|stp)$/i.test(name));
+    }
+    let target = fileName || stepFiles[0];
+    if (!target) {
+      console.error("No imported STEP file found. Import a .step/.stp file first; STEP JS generates automatically after import.");
+      return null;
+    }
+    let code = await this.engine.generateSTEPImportCode(target);
+    if (code) {
+      this.openCodeTab(code, target + ' import');
+      console.log("Opened new editor tab for imported STEP file " + target);
+    }
+    return code;
   }
 
   /** Clear all externally loaded files from the `externalFiles` dict. */

@@ -1,0 +1,65 @@
+<h2>What should generated CascadeStudio JS look like?</h2>
+<p class="subtitle">This controls whether non-coding users can safely edit parts after conversion.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)" style="border-color:#4CAF50">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Declarative part manifest + small helper functions <span class="badge">Recommended</span></h3>
+      <p>Generated code starts with editable data objects, then generic helper code loads, colors, transforms, hides, and groups parts.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Best fit for non-coders: edit names, colors, visibility, transforms in one clear table.</li>
+          <li>Reliable: helper can enforce missing-file checks and stable fallbacks around <code>externalShapes</code>.</li>
+          <li>Maintainable: converter changes manifest schema without rewriting lots of imperative code.</li>
+          <li>YAGNI-friendly: no new UI required for first version.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Generated JS includes boilerplate helper code unless helpers become built-in library functions.</li>
+          <li>Users must understand simple object fields like <code>visible</code>, <code>color</code>, <code>translate</code>.</li>
+          <li>Complex conditional assembly logic still needs real JS edits.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Straight imperative JS</h3>
+      <p>Emit simple sequential lines: get shape, translate, rotate, color, push to scene for each part.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Looks like normal CascadeStudio examples and is easy to debug line-by-line.</li>
+          <li>No schema docs needed; each operation is explicit JS.</li>
+          <li>Good for power users who already know <code>Translate()</code>, <code>Rotate()</code>, <code>sceneShapes</code>.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Large assemblies become repetitive and intimidating for non-coders.</li>
+          <li>Harder to bulk rename, recolor, hide, or parameterize parts safely.</li>
+          <li>Missing-file and fallback logic gets duplicated or omitted.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Generated GUI controls first</h3>
+      <p>Emit code that creates Tweakpane controls for every part: visibility toggles, colors, transforms, group switches.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Most accessible for users who avoid code entirely.</li>
+          <li>Uses existing CascadeStudio GUI/Tweakpane pattern.</li>
+          <li>Good for exploring assemblies visually after import.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Can overwhelm GUI panel for many parts.</li>
+          <li>Does not solve clean source-of-truth unless backed by a manifest anyway.</li>
+          <li>More generated code and performance risk before core conversion is stable.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>

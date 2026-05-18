@@ -19,11 +19,6 @@ class EditorManager {
 
   /** Initialize the editor panel inside a DockviewContainer. */
   initPanel(container, state) {
-    if (this.editor) {
-      monaco.editor.getModels().forEach(model => model.dispose());
-      this.editor = null;
-    }
-
     // Set the Monaco Language Options
     monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
       allowNonTsExtensions: true,
@@ -65,7 +60,7 @@ class EditorManager {
 
     // Initialize the Monaco Code Editor
     const isMobile = window.innerHeight > window.innerWidth;
-    this.editor = monaco.editor.create(container.element, {
+    const editor = monaco.editor.create(container.element, {
       value: state.code,
       language: "typescript",
       theme: "vs-dark",
@@ -83,19 +78,24 @@ class EditorManager {
         padding: { top: 0, bottom: 0 }
       })
     });
-    window.monacoEditor = this.editor;
+    this.editor = editor;
+    window.monacoEditor = editor;
 
-    if (this._changeDisposable) { this._changeDisposable.dispose(); }
-    this._changeDisposable = this.editor.onDidChangeModelContent(() => {
-      if (this._suppressAutoEvaluate) { return; }
+    editor.onDidChangeModelContent(() => {
+      if (this.editor !== editor || this._suppressAutoEvaluate) { return; }
       this.scheduleEvaluate(true, 600);
+    });
+    container.on('active', () => {
+      this.editor = editor;
+      this._codeContainer = container;
+      window.monacoEditor = editor;
     });
 
     // Collapse all top-level functions in the Editor
-    this._collapseTopLevelFunctions(state.code);
+    this._collapseTopLevelFunctions(state.code, editor);
 
     // Set up keyboard shortcuts
-    this._setupKeyboardShortcuts(container);
+    this._setupKeyboardShortcuts(container, editor);
   }
 
   /** Legacy: Register the dockable Monaco Code Editor component with Golden Layout.
@@ -133,7 +133,7 @@ class EditorManager {
   }
 
   /** Evaluate the current code: transpile if OpenSCAD, then send to worker via engine. */
-  evaluateCode(saveToURL = false) {
+  evaluateCode(saveToURL = false, { preserveConsole = false } = {}) {
     if (window.workerWorking) {
       this._pendingEvaluate = true;
       return;
@@ -146,7 +146,7 @@ class EditorManager {
     monaco.editor.setModelMarkers(this.editor.getModel(), 'test', []);
 
     // Clear console and refresh the GUI Panel
-    this._app.console.clear();
+    if (!preserveConsole) { this._app.console.clear(); }
     this._app.gui.reset();
     if (this._app.viewport) this._app.viewport.clearTransformHandles();
 
@@ -243,7 +243,7 @@ class EditorManager {
   }
 
   /** Collapse all top-level functions in the editor. */
-  _collapseTopLevelFunctions(code) {
+  _collapseTopLevelFunctions(code, editor = this.editor) {
     let codeLines = code.split(/\r\n|\r|\n/);
     let collapsed = []; let curCollapse = null;
     for (let li = 0; li < codeLines.length; li++) {
@@ -255,7 +255,7 @@ class EditorManager {
         curCollapse = null;
       }
     }
-    let mergedViewState = Object.assign(this.editor.saveViewState(), {
+    let mergedViewState = Object.assign(editor.saveViewState(), {
       "contributionsState": {
         "editor.contrib.folding": {
           "collapsedRegions": collapsed,
@@ -265,11 +265,11 @@ class EditorManager {
         "editor.contrib.wordHighlighter": false
       }
     });
-    this.editor.restoreViewState(mergedViewState);
+    editor.restoreViewState(mergedViewState);
   }
 
   /** Set up keyboard shortcuts for evaluation and save. */
-  _setupKeyboardShortcuts(container) {
+  _setupKeyboardShortcuts(container, editor = this.editor) {
     document.onkeydown = (e) => {
       if (e.code === 'F5') {
         e.preventDefault();
@@ -286,10 +286,11 @@ class EditorManager {
 
     document.onkeyup = (e) => {
       if (!this._app.file.handle || e.which === 0) { return true; }
-      if (this._app.file.content == this.editor.getValue()) {
-        this._codeContainer.setTitle(this._app.file.handle.name);
+      if (this.editor !== editor) { return true; }
+      if (this._app.file.content == editor.getValue()) {
+        container.setTitle(this._app.file.handle.name);
       } else {
-        this._codeContainer.setTitle('* ' + this._app.file.handle.name);
+        container.setTitle('* ' + this._app.file.handle.name);
       }
       return true;
     };

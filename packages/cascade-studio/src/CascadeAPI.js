@@ -233,6 +233,9 @@ Revolve(profile, 360);`,
 
   // Export formats
   getSTEP() { return this._app.engine.exportSTEP(); }
+  getExternalFileNames() { return this._app.engine.getExternalFileNames(); }
+  analyzeSTEP(fileName) { return this._app.engine.analyzeSTEP(fileName); }
+  generateSTEPImportCode(fileName) { return this._app.engine.generateSTEPImportCode(fileName); }
   getSTL() {
     const viewport = this._app.viewport;
     if (!viewport || !viewport.mainObject) return '';

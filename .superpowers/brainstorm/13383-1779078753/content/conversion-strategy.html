@@ -1,0 +1,65 @@
+<h2>What should “convert STEP to CascadeStudio JS” mean first?</h2>
+<p class="subtitle">STEP can be rendered directly, but fully rebuilding editable parametric code from B-Rep geometry is not reliable. Pick target output.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)" style="border-color:#4CAF50">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Import wrapper JS + extracted assembly map <span class="badge">Recommended</span></h3>
+      <p>Generate CascadeStudio JS that embeds/loads STEP content, names parts, applies transforms/colors, and exposes user-editable hooks.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Most reliable: reuses OCCT STEP reader already in <code>FileUtils.js</code>.</li>
+          <li>Preserves exact CAD geometry instead of guessing primitives from B-Rep faces.</li>
+          <li>Fits CascadeStudio today: <code>externalShapes</code>, <code>sceneShapes.push()</code>, existing STEP import.</li>
+          <li>Lets users edit assembly metadata without needing CAD kernel internals.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Output is not fully parametric reconstruction like <code>Box()</code>/<code>FilletEdges()</code>.</li>
+          <li>Big STEP files make generated JS/project storage large unless external asset kept.</li>
+          <li>Feature history stays opaque: cannot edit original sketches/fillets.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Best-effort primitive reconstruction</h3>
+      <p>Analyze STEP geometry and emit CascadeStudio operations like cylinders, boxes, revolves, booleans, and transforms where recognized.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Could produce readable, editable CascadeStudio code for simple mechanical parts.</li>
+          <li>Smaller output for primitive-heavy models.</li>
+          <li>Useful as learning scaffold for users who want to modify design intent.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Fragile: STEP stores final B-Rep, not original modeling history.</li>
+          <li>Hard to infer boolean order, sketches, fillet selectors, and design parameters.</li>
+          <li>High maintenance risk in browser/WASM worker; many false reconstructions.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Hybrid: exact STEP baseline + optional recognized helpers</h3>
+      <p>Always render exact imported shapes, then annotate likely cylinders/planes/axes and generate optional helper code for user replacement.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Reliable viewport path remains exact even when recognition fails.</li>
+          <li>Gives users part names, axes, dimensions, and editable hints over time.</li>
+          <li>Good incremental roadmap: ship import wrapper first, add recognizers later.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>More UX complexity: generated code has exact imports plus advisory helper blocks.</li>
+          <li>Requires clear warnings so users know which code is authoritative.</li>
+          <li>Recognizer output still may be incomplete for organic or vendor CAD.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,65 @@
+<h2>How much assembly structure should converter extract?</h2>
+<p class="subtitle">This decides whether generated JS is one opaque shape or a user-editable part list.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Single imported shape</h3>
+      <p>Generate one line that renders the combined STEP result, roughly current import behavior.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Most like existing <code>reader.OneShape()</code>; fastest to ship.</li>
+          <li>Lowest chance of breaking weird STEP files with incomplete names/assemblies.</li>
+          <li>Simple code for users who only need visual reference.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>User cannot hide, rename, recolor, or reposition individual parts.</li>
+          <li>Does not use user’s knowledge of how assembly parts work together.</li>
+          <li>Hard to build helpful JS beyond <code>sceneShapes.push(externalShapes[name])</code>.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)" style="border-color:#4CAF50">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Extract named parts/solids into editable manifest <span class="badge">Recommended</span></h3>
+      <p>Generate JS with a manifest of detected parts: names, labels, colors, transforms, visibility, and comments for user edits.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Matches stated need: user knows assembly/parts, just not code.</li>
+          <li>Preserves exact STEP geometry while making organization editable in JS.</li>
+          <li>Good UX path: user can rename <code>bracket</code>, <code>shaft</code>, <code>housing</code> without reconstructing CAD.</li>
+          <li>Reliable if fallback keeps original combined shape when structure extraction is weak.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Requires deeper STEP/XDE label traversal than current <code>OneShape()</code> path.</li>
+          <li>Some STEP files lack meaningful product names; converter must generate stable fallback names.</li>
+          <li>More generated code and more UI decisions than one opaque shape.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Ask user to manually define parts after import</h3>
+      <p>Render the STEP, then provide a UI or code scaffold where user groups solids and assigns names.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Handles messy vendor STEP files where assembly labels are missing or wrong.</li>
+          <li>Captures human intent directly: functional groups, not just CAD product tree.</li>
+          <li>Can improve generated code quality for assemblies with repeated hardware.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Needs significant new interaction design beyond current editor/viewport flow.</li>
+          <li>Manual grouping is slow for large assemblies.</li>
+          <li>Higher implementation risk before basic conversion proves useful.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>

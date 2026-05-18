@@ -11,6 +11,7 @@ class ConsoleManager {
     this._consoleContainer = null;
     this._consoleGolden = null;
     this._realConsoleLog = null;
+    this._progressLines = new Map();
     this._initialized = false;
   }
 
@@ -77,6 +78,43 @@ class ConsoleManager {
 
   /** Get the container (for state persistence of imported files). */
   get goldenContainer() { return this._consoleGolden; }
+
+  /** Update or create a CLI-style progress line. */
+  updateProgress(id, label, detail = '', percent = null, options = {}) {
+    if (!this._consoleContainer) return;
+
+    const width = 28;
+    let normalized = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
+    let filled = normalized === null ? (options.spinner || 0) % width : Math.round((normalized / 100) * width);
+    let bar = '';
+    for (let i = 0; i < width; i++) {
+      if (normalized === null) {
+        bar += (i === filled) ? '>' : '-';
+      } else {
+        bar += (i < filled) ? '#' : '-';
+      }
+    }
+
+    let pct = normalized === null ? ' --%' : String(Math.round(normalized)).padStart(3, ' ') + '%';
+    let text = `> ${label} [${bar}] ${pct}` + (detail ? `  ${detail}` : '');
+
+    let line = this._progressLines.get(id);
+    if (!line) {
+      line = document.createElement('div');
+      line.style.fontFamily = 'monospace';
+      line.style.color = '#9cdcfe';
+      line.style.fontSize = '1.2em';
+      this._consoleContainer.appendChild(line);
+      this._progressLines.set(id, line);
+    }
+    line.textContent = text;
+    this._consoleContainer.parentElement.scrollTop = this._consoleContainer.parentElement.scrollHeight;
+
+    if (options.done || normalized === 100) {
+      line.style.color = '#b5cea8';
+      this._progressLines.delete(id);
+    }
+  }
 
   /** Override console.log to capture output and display in the panel. */
   _setupConsoleOverrides() {

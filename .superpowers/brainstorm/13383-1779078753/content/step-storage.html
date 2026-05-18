@@ -1,0 +1,65 @@
+<h2>Where should the STEP data live in generated JS?</h2>
+<p class="subtitle">This controls shareability, project size, and whether generated code works without extra files.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Inline STEP text in the JS</h3>
+      <p>Generated code contains the full STEP file as a string or compressed/base64 blob, then imports it at runtime.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Single copy-paste artifact; user can share one CascadeStudio URL/project.</li>
+          <li>No dependency on uploaded file names or browser file persistence.</li>
+          <li>Good for small vendor parts and examples.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Large assemblies can bloat Monaco, URL serialization, and browser memory.</li>
+          <li>Generated code becomes noisy; hard for users to read actual assembly logic.</li>
+          <li>May hit URL/localStorage limits if auto-shared.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)" style="border-color:#4CAF50">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Attach STEP as project external file <span class="badge">Recommended</span></h3>
+      <p>Keep STEP content in CascadeStudio’s existing external file/project storage, and generate clean JS that references it by name.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Fits current app model: imported files already populate <code>externalShapes[fileName]</code>.</li>
+          <li>Keeps generated JS readable: assembly code, names, transforms, comments stay visible.</li>
+          <li>Better for larger assemblies than inline code or URL payloads.</li>
+          <li>Lowest implementation risk: extends current load/save project behavior.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Generated JS alone is not enough; project must retain attached file data.</li>
+          <li>Needs clear missing-file errors if user pastes code into fresh session.</li>
+          <li>Sharing raw code outside project package loses geometry.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Reference external URL or path</h3>
+      <p>Generated code fetches STEP data from a user-provided URL, server asset, or local path-like reference.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Smallest generated code and project metadata.</li>
+          <li>Works well for hosted libraries of reusable hardware/components.</li>
+          <li>Can update geometry without regenerating JS.</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Browser CORS/offline constraints make this brittle for casual users.</li>
+          <li>Local paths cannot be read from browser JS without user file selection.</li>
+          <li>Remote asset changes can silently alter rendered model.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>

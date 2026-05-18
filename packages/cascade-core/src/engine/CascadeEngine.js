@@ -30,7 +30,7 @@ class CascadeEngine {
     const eventTypes = [
       'log', 'error', 'Progress', 'addSlider', 'addButton',
       'addCheckbox', 'addTextbox', 'addDropdown', 'saveFile',
-      'createTransformHandle'
+      'loadFiles', 'importProgress', 'generatedSTEPImportCode', 'createTransformHandle'
     ];
     for (const type of eventTypes) {
       this._messageBus.on(type, (payload) => {
@@ -101,6 +101,21 @@ class CascadeEngine {
   /** Export the current shape as STEP text. */
   async exportSTEP() {
     return this._messageBus.request('saveShapeSTEP');
+  }
+
+  /** Return names of imported external files. */
+  async getExternalFileNames() {
+    return this._messageBus.request('getExternalFileNames');
+  }
+
+  /** Analyze imported STEP file into stable part metadata. */
+  async analyzeSTEP(fileName) {
+    return this._messageBus.request('analyzeSTEP', { fileName });
+  }
+
+  /** Generate CascadeStudio JS for an imported STEP file. */
+  async generateSTEPImportCode(fileName) {
+    return this._messageBus.request('generateSTEPImportCode', { fileName });
   }
 
   /** Send files to the worker for import. */
