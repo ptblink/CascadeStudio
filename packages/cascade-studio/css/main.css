@@ -335,6 +335,27 @@ body {
   color: var(--cs-text-secondary);
 }
 
+/* Code editor tab add button */
+.cs-add-code-tab-button {
+  width: 28px;
+  height: var(--dv-tabs-and-actions-container-height, 35px);
+  border: 0;
+  border-left: 1px solid var(--dv-tab-divider-color, #1e1e1e);
+  background: var(--dv-tabs-and-actions-container-background-color, #252526);
+  color: var(--dv-activegroup-hiddenpanel-tab-color, #969696);
+  font: 600 18px/1 var(--cs-font-ui);
+  cursor: pointer;
+  padding: 0;
+}
+.cs-add-code-tab-button:hover {
+  background: var(--dv-activegroup-hiddenpanel-tab-background-color, #2d2d2d);
+  color: var(--dv-activegroup-visiblepanel-tab-color, #fff);
+}
+.cs-add-code-tab-button:focus-visible {
+  outline: 1px solid var(--cs-accent);
+  outline-offset: -2px;
+}
+
 /* Editor line highlight when scrubbing timeline */
 .cs-history-line-highlight {
   background: rgba(76, 175, 80, 0.12);

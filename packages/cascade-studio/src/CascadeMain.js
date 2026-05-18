@@ -106,24 +106,10 @@ class CascadeStudioApp {
     // Register OpenSCAD language with Monaco (for syntax highlighting)
     this._openscadMonaco.registerLanguage();
 
-    // Mode toggle handler — save/restore code per mode
-    this._savedCode = {};
-    const modeSelect = document.getElementById('editorMode');
-    if (modeSelect) {
-      modeSelect.addEventListener('change', (e) => {
-        const newMode = e.target.value;
-        // Save current code for the current mode
-        this._savedCode[this.editor.mode] = this.editor.getCode();
-        this.editor.setMode(newMode);
-        // Load saved code or starter code for the new mode
-        const starter = newMode === 'openscad'
-          ? CascadeStudioApp.OPENSCAD_STARTER_CODE
-          : CascadeStudioApp.STARTER_CODE;
-        this.editor.setCode(this._savedCode[newMode] || starter);
-        // Re-fit camera and auto-evaluate
-        if (this.viewport) { this.viewport._fitOnNextRender = true; }
-        this.editor.evaluateCode();
-      });
+    // Test fixture dropdown — load selected JavaScript fixture into current editor tab
+    const fixtureSelect = document.getElementById('testFixtureSelect');
+    if (fixtureSelect) {
+      this._initFixtureSelect(fixtureSelect);
     }
 
     // Initialize the engine (loads worker + WASM), then start the layout
@@ -208,7 +194,7 @@ class CascadeStudioApp {
     let searchParams = new URLSearchParams(window.location.search || window.location.hash.substr(1));
     let loadFromURL = searchParams.has("code");
 
-    let codeStr = CascadeStudioApp.STARTER_CODE;
+    let codeStr = CascadeStudioApp.EMPTY_CODE;
     this.gui.state = {};
 
     if (projectContent) {
@@ -248,6 +234,7 @@ class CascadeStudioApp {
     this._dockviewApi = createDockview(appBody, {
       className: 'dockview-theme-dark',
       disableFloatingGroups: true,
+      createLeftHeaderActionComponent: (group) => this._createCodeTabAddButton(group),
       createComponent: (options) => {
         const element = document.createElement('div');
         element.style.width = '100%';
@@ -363,6 +350,45 @@ class CascadeStudioApp {
     requestAnimationFrame(this._updateLayoutSize);
   }
 
+  /** Populate test fixture dropdown and load fixtures into the current editor tab. */
+  async _initFixtureSelect(select) {
+    try {
+      const response = await fetch('fixture-manifest.json', { cache: 'no-store' });
+      if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+      const fixtures = await response.json();
+      for (const name of fixtures) {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+      }
+      select.addEventListener('change', async () => {
+        const name = select.value;
+        if (!name) return;
+        try {
+          let fixture = await fetch('fixtures/' + encodeURIComponent(name), { cache: 'no-store' });
+          if (!fixture.ok) {
+            fixture = await fetch('test/fixtures/' + encodeURIComponent(name), { cache: 'no-store' });
+          }
+          if (!fixture.ok) throw new Error(fixture.status + ' ' + fixture.statusText);
+          const code = await fixture.text();
+          this.editor.setMode('cascadestudio');
+          this.editor.setCode(code);
+          this.editor.container?.setTitle(name);
+          if (this.viewport) { this.viewport._fitOnNextRender = true; }
+          this.editor.evaluateCode();
+        } catch (error) {
+          console.error('Failed to load test fixture ' + name + ': ' + error.message);
+        } finally {
+          select.value = '';
+        }
+      });
+    } catch (error) {
+      console.error('Failed to load test fixture list: ' + error.message);
+      select.disabled = true;
+    }
+  }
+
   /** Initialize the Three.js 3D Viewport. */
   _initCascadeView(container, state) {
     this.gui.state = state;
@@ -452,6 +478,34 @@ class CascadeStudioApp {
   loadFiles(fileElementID = "files") {
     let files = document.getElementById(fileElementID).files;
     this.engine.importFiles(files);
+  }
+
+  /** Create the + button shown after code editor tabs. */
+  _createCodeTabAddButton(group) {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.className = 'cs-add-code-tab-button';
+    element.textContent = '+';
+    element.title = 'New code tab';
+    element.setAttribute('aria-label', 'New code tab');
+
+    const isCodeGroup = () => group.panels?.some(panel => panel.id === 'codeEditor' || panel.id?.startsWith('codeEditor-'));
+    const updateVisibility = () => { element.style.display = isCodeGroup() ? '' : 'none'; };
+
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.openCodeTab(CascadeStudioApp.EMPTY_CODE, '* Untitled');
+    });
+
+    updateVisibility();
+    const disposable = this._dockviewApi?.onDidLayoutChange?.(() => updateVisibility());
+
+    return {
+      element,
+      init: updateVisibility,
+      dispose: () => disposable?.dispose?.()
+    };
   }
 
   /** Open code in a new editor tab and make it active. */
@@ -590,7 +644,10 @@ class CascadeStudioApp {
   }
 }
 
-/** Default starter code shown in the editor. */
+/** Empty code used for new editor tabs. */
+CascadeStudioApp.EMPTY_CODE = '';
+
+/** Example starter code retained for URL/project fixtures and mode switching. */
 CascadeStudioApp.STARTER_CODE =
 `// Welcome to Cascade Studio!  A Browser-Based CAD Modeling Environment.
 // Adjust these sliders to modify the model in real time:

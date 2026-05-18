@@ -90,7 +90,23 @@ for (const file of ['manifest.webmanifest', 'service-worker.js']) {
   }
 }
 
-// 6. Generate dist/index.html
+// 6. Copy JavaScript test fixtures and generate manifest
+console.log('[cascade-studio] Copying test fixtures...');
+const fixtureSrcDir = path.join(monoRoot, 'test', 'fixtures');
+const fixtureDistDir = path.join(distDir, 'fixtures');
+let fixtureFiles = [];
+if (fs.existsSync(fixtureSrcDir)) {
+  fs.mkdirSync(fixtureDistDir, { recursive: true });
+  fixtureFiles = fs.readdirSync(fixtureSrcDir)
+    .filter(name => name.endsWith('.js'))
+    .sort((a, b) => a.localeCompare(b));
+  for (const name of fixtureFiles) {
+    fs.copyFileSync(path.join(fixtureSrcDir, name), path.join(fixtureDistDir, name));
+  }
+}
+fs.writeFileSync(path.join(distDir, 'fixture-manifest.json'), JSON.stringify(fixtureFiles, null, 2));
+
+// 7. Generate dist/index.html
 console.log('[cascade-studio] Generating index.html...');
 fs.writeFileSync(path.join(distDir, 'index.html'), `<!DOCTYPE html>
 <html lang="en">
@@ -154,9 +170,8 @@ fs.writeFileSync(path.join(distDir, 'index.html'), `<!DOCTYPE html>
                     <input id="files" name="files" type="file" accept=".iges,.step,.igs,.stp,.stl" multiple style="display:none;" oninput="window.loadFiles();"/>
                 </label>
                 <a href="#" title="Clears the external step/iges/stl files stored in the project." onmouseup="window.clearExternalFiles();">Clear Imported</a>
-                <select id="editorMode" class="topnav-select" title="Editor Language Mode">
-                    <option value="cascadestudio">CascadeStudio JS</option>
-                    <option value="openscad">OpenSCAD</option>
+                <select id="testFixtureSelect" class="topnav-select" title="Load JavaScript test fixture into current editor tab">
+                    <option value="">Load test fixture...</option>
                 </select>
             </div>
         </div>

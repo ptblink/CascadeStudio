@@ -70,9 +70,8 @@
                     <input id="files" name="files" type="file" accept=".iges,.step,.igs,.stp,.stl" multiple style="display:none;" oninput="window.loadFiles();"/>
                 </label>
                 <a href="#" title="Clears the external step/iges/stl files stored in the project." onmouseup="window.clearExternalFiles();">Clear Imported</a>
-                <select id="editorMode" class="topnav-select" title="Editor Language Mode">
-                    <option value="cascadestudio">CascadeStudio JS</option>
-                    <option value="openscad">OpenSCAD</option>
+                <select id="testFixtureSelect" class="topnav-select" title="Load JavaScript test fixture into current editor tab">
+                    <option value="">Load test fixture...</option>
                 </select>
             </div>
         </div>
