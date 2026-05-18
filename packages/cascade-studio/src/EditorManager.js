@@ -11,6 +11,10 @@ class EditorManager {
     this._extraLibs = [];
     this._codeContainer = null;
     this._openscadProviders = [];
+    this._autoEvaluateTimer = null;
+    this._pendingEvaluate = false;
+    this._suppressAutoEvaluate = false;
+    this._changeDisposable = null;
   }
 
   /** Initialize the editor panel inside a DockviewContainer. */
@@ -81,6 +85,12 @@ class EditorManager {
     });
     window.monacoEditor = this.editor;
 
+    if (this._changeDisposable) { this._changeDisposable.dispose(); }
+    this._changeDisposable = this.editor.onDidChangeModelContent(() => {
+      if (this._suppressAutoEvaluate) { return; }
+      this.scheduleEvaluate(true, 600);
+    });
+
     // Collapse all top-level functions in the Editor
     this._collapseTopLevelFunctions(state.code);
 
@@ -103,12 +113,31 @@ class EditorManager {
 
   /** Set the code in the editor. */
   setCode(code) {
-    if (this.editor) { this.editor.setValue(code); }
+    if (this.editor) {
+      this._suppressAutoEvaluate = true;
+      this.editor.setValue(code);
+      this._suppressAutoEvaluate = false;
+    }
+  }
+
+  /** Schedule an evaluation, debounced for editor/UI changes. */
+  scheduleEvaluate(saveToURL = false, delay = 0) {
+    this._pendingEvaluate = true;
+    clearTimeout(this._autoEvaluateTimer);
+    this._autoEvaluateTimer = setTimeout(() => {
+      this._autoEvaluateTimer = null;
+      if (!this._pendingEvaluate) { return; }
+      this._pendingEvaluate = false;
+      this.evaluateCode(saveToURL);
+    }, delay);
   }
 
   /** Evaluate the current code: transpile if OpenSCAD, then send to worker via engine. */
   evaluateCode(saveToURL = false) {
-    if (window.workerWorking) { return; }
+    if (window.workerWorking) {
+      this._pendingEvaluate = true;
+      return;
+    }
     if (!this._app.engine || !this._app.engine.isReady) { return; }
     window.workerWorking = true;
 
@@ -142,7 +171,11 @@ class EditorManager {
       }
     }).catch((err) => {
       console.error("Evaluation error: " + err.message);
+    }).finally(() => {
       window.workerWorking = false;
+      if (this._pendingEvaluate) {
+        this.scheduleEvaluate(saveToURL, 0);
+      }
     });
 
     this._codeContainer.setState({ code: newCode });
@@ -171,9 +204,9 @@ class EditorManager {
     const csStarter = this._app.constructor.STARTER_CODE;
     const osStarter = this._app.constructor.OPENSCAD_STARTER_CODE;
     if (newMode === 'openscad' && osStarter && currentCode === csStarter) {
-      this.editor.setValue(osStarter);
+      this.setCode(osStarter);
     } else if (newMode === 'cascadestudio' && currentCode === osStarter) {
-      this.editor.setValue(csStarter);
+      this.setCode(csStarter);
     }
 
     // Fit camera on the next render after a mode switch
@@ -240,13 +273,13 @@ class EditorManager {
     document.onkeydown = (e) => {
       if (e.code === 'F5') {
         e.preventDefault();
-        this.evaluateCode(true);
+        this.scheduleEvaluate(true, 0);
         return false;
       }
       if (e.code === 'KeyS' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         this._app.saveProject();
-        this.evaluateCode(true);
+        this.scheduleEvaluate(true, 0);
       }
       return true;
     };

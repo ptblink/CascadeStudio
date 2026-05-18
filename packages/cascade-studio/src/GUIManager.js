@@ -24,11 +24,9 @@ class GUIManager {
       this._addSeparator();
       const slider = this._gui.addBinding(this.state, payload.name, params);
 
-      if (payload.realTime) {
-        slider.on('change', e => {
-          if (e.last) { this._delayReload(); }
-        });
-      }
+      slider.on('change', e => {
+        if (e.last) { this._delayReload(); }
+      });
     };
 
     this._handlers["addButton"] = (payload) => {
@@ -53,11 +51,9 @@ class GUIManager {
       if (!(payload.name in this.state)) { this.state[payload.name] = payload.default || ''; }
       this._addSeparator();
       const input = this._gui.addBinding(this.state, payload.name);
-      if (payload.realTime) {
-        input.on('change', e => {
-          if (e.last) { this._delayReload(); }
-        });
-      }
+      input.on('change', e => {
+        if (e.last) { this._delayReload(); }
+      });
     };
 
     this._handlers["addDropdown"] = (payload) => {
@@ -65,11 +61,9 @@ class GUIManager {
       const options = payload.options || {};
       this._addSeparator();
       const input = this._gui.addBinding(this.state, payload.name, { options });
-      if (payload.realTime) {
-        input.on('change', e => {
-          if (e.last) { this._delayReload(); }
-        });
-      }
+      input.on('change', e => {
+        if (e.last) { this._delayReload(); }
+      });
     };
 
     // Register with the engine event system
@@ -90,7 +84,6 @@ class GUIManager {
     this._userGui = false;
 
     // Add built-in controls directly
-    this._handlers["addButton"]({ name: "Evaluate", label: "Function", callback: () => { this._app.editor.evaluateCode(true); } });
     this._handlers["addSlider"]({ name: "MeshRes", default: 0.1, min: 0.01, max: 2, step: 0.01, dp: 2 });
     this._handlers["addCheckbox"]({ name: "Cache?", default: true });
     this._handlers["addCheckbox"]({ name: "GroundPlane?", default: true });
@@ -108,7 +101,7 @@ class GUIManager {
 
   /** Workaround for Tweakpane errors during change event callbacks. */
   _delayReload() {
-    setTimeout(() => { this._app.editor.evaluateCode(); }, 0);
+    setTimeout(() => { this._app.editor.scheduleEvaluate(true, 0); }, 0);
   }
 }
 
