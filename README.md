@@ -18,6 +18,15 @@ Use code to create 3D Models with features ranging from simple primitives + CSG 
 
 Write in JavaScript or OpenSCAD, visualize in real-time, and export to `.step`, `.stl`, or `.obj`. Copy the URL to share your model with anyone.
 
+## About This Fork
+
+This repo is forked from the original [zalo/CascadeStudio](https://github.com/zalo/CascadeStudio). Main user-facing changes in this fork:
+
+- **Local development now uses `npm run dev`** instead of `npx http-server ./packages/cascade-studio/dist -p 8080 -c-1`.
+- `npm run dev` builds once, serves `packages/cascade-studio/dist/`, watches source files, rebuilds on change, disables caching, and reloads the browser.
+- `npm run build` still creates the production/static build in `packages/cascade-studio/dist/`.
+- The app remains available at `http://127.0.0.1:8080` by default. Override with `PORT=8081 npm run dev` or `npm run dev -- --port 8081`.
+
 ## Features
 
  - **Powerful Standard Library** for primitives, booleans, sweeps, lofts, fillets, and more
@@ -69,9 +78,16 @@ Write in JavaScript or OpenSCAD, visualize in real-time, and export to `.step`, 
 
 ```bash
 npm install
+npm run dev
+# Open http://127.0.0.1:8080
+```
+
+`npm run dev` builds the app, serves it locally, watches `packages/`, rebuilds on changes, disables browser caching, and auto-reloads open pages.
+
+For a production/static build only:
+
+```bash
 npm run build
-npx http-server ./packages/cascade-studio/dist -p 8080 -c-1
-# Open http://localhost:8080
 ```
 
 ### Standard Library
@@ -167,7 +183,7 @@ Cascade Studio exposes `window.CascadeAPI` for programmatic control via [Playwri
 
 ```javascript
 // Navigate and wait for WASM to load
-await page.goto('http://localhost:8080');
+await page.goto('http://127.0.0.1:8080');
 await page.waitForFunction(() => window.CascadeAPI?.isReady());
 
 // Learn the API
@@ -251,11 +267,10 @@ Model code is saved to the URL upon every successful evaluation, so you can copy
 
 ```bash
 npm install
-npm run build
-npx http-server ./packages/cascade-studio/dist -p 8080 -c-1
+npm run dev
 ```
 
-Edit source files in `packages/`, rebuild, and refresh. Use a new port if changing JS code, as browsers cache ESM aggressively.
+Edit source files in `packages/`; the dev server rebuilds and reloads automatically. Use `PORT=8081 npm run dev` or `npm run dev -- --port 8081` if port `8080` is busy.
 
 Pull Requests to this repo are automatically hosted to Vercel instances, so other users will be able to test and benefit from your modifications as soon as the PR is submitted.
 
