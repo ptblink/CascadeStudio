@@ -11,6 +11,8 @@ class ProvenanceManager {
     this._status = null;
     this._cy = null;
     this._lastGraph = null;
+    this._focusSubshapeId = null;
+    this._focusLabel = null;
     this._updateToken = 0;
     this._resizeObserver = null;
     this._pendingRefresh = null;
@@ -55,6 +57,12 @@ class ProvenanceManager {
     fit.style.fontSize = '12px';
     fit.onclick = () => this._cy?.fit(undefined, 24);
     toolbar.appendChild(fit);
+
+    const showAll = document.createElement('button');
+    showAll.textContent = 'Show all';
+    showAll.style.fontSize = '12px';
+    showAll.onclick = () => this.showAll();
+    toolbar.appendChild(showAll);
 
     const refresh = document.createElement('button');
     refresh.textContent = 'Refresh';
@@ -114,7 +122,6 @@ class ProvenanceManager {
       elements: [],
       minZoom: 0.08,
       maxZoom: 3,
-      wheelSensitivity: 0.18,
       style: [
         { selector: 'node', style: { 'background-color': '#6a9955', 'border-color': '#d4d4d4', 'border-width': 1, 'color': '#d4d4d4', 'font-size': 9, 'label': 'data(label)', 'text-valign': 'center', 'text-halign': 'center', 'text-wrap': 'wrap', 'text-max-width': 78, 'width': 46, 'height': 46 } },
         { selector: 'node[type = "op"]', style: { 'background-color': '#569cd6', 'shape': 'round-rectangle', 'width': 74, 'height': 34 } },
@@ -161,7 +168,11 @@ class ProvenanceManager {
       const graph = await this._app.engine.getProvenanceGraph();
       if (token !== this._updateToken) { return; }
       this._lastGraph = graph || null;
-      this._render(graph);
+      if (this._focusSubshapeId) {
+        await this._renderFocusedGraph(this._focusSubshapeId, this._focusLabel);
+      } else {
+        this._render(graph);
+      }
     } catch (err) {
       if (token !== this._updateToken) { return; }
       this._status.textContent = 'Provenance graph: error';
@@ -171,12 +182,79 @@ class ProvenanceManager {
 
   clear() {
     this._lastGraph = null;
+    this._focusSubshapeId = null;
+    this._focusLabel = null;
     if (this._status) { this._status.textContent = 'Provenance graph: waiting for model'; }
     if (this._details) { this._details.textContent = 'Run code to populate graph.'; }
     this._cy?.elements().remove();
   }
 
-  _render(graph) {
+  showAll() {
+    this._focusSubshapeId = null;
+    this._focusLabel = null;
+    if (this._lastGraph) this._render(this._lastGraph);
+    else this.refresh();
+  }
+
+  async focusSubshape(subshapeId, label = 'selection') {
+    if (!subshapeId) { return; }
+    this._focusSubshapeId = subshapeId;
+    this._focusLabel = label;
+    if (!this._lastGraph) await this.refresh();
+    else await this._renderFocusedGraph(subshapeId, label);
+  }
+
+  async _renderFocusedGraph(subshapeId, label = 'selection') {
+    if (!this._lastGraph) { return; }
+    try {
+      const trace = await this._app.engine.traceSubshape(subshapeId);
+      const focused = this._filterGraphForTrace(this._lastGraph, trace, subshapeId);
+      this._render(focused, { label, trace, sourceGraph: this._lastGraph });
+    } catch (err) {
+      if (this._status) { this._status.textContent = 'Provenance graph: trace error'; }
+      if (this._details) { this._details.textContent = err?.message || String(err); }
+    }
+  }
+
+  _filterGraphForTrace(graph, trace, subshapeId) {
+    const nodeIds = new Set([subshapeId]);
+    const edgeKeys = new Set();
+    const addEdgeKey = (edge) => edgeKeys.add(`${edge.from || ''}->${edge.to || ''}:${edge.opId || ''}:${edge.relation || ''}`);
+
+    for (const step of trace?.chain || []) {
+      if (step.subshapeId) nodeIds.add(step.subshapeId);
+      if (step.from) nodeIds.add(step.from);
+      if (step.opId) nodeIds.add(step.opId);
+    }
+
+    for (const edge of graph.edges || []) {
+      if (nodeIds.has(edge.to) || (edge.from && nodeIds.has(edge.from))) {
+        if (edge.opId) nodeIds.add(edge.opId);
+        if (edge.to) nodeIds.add(edge.to);
+        if (edge.from) nodeIds.add(edge.from);
+        addEdgeKey(edge);
+      }
+    }
+
+    for (const subshapeId of [...nodeIds]) {
+      const subshape = graph.subshapes?.[subshapeId];
+      if (subshape?.shapeId) nodeIds.add(subshape.shapeId);
+    }
+    for (const shapeId of [...nodeIds]) {
+      const shape = graph.shapes?.[shapeId];
+      if (shape?.opId) nodeIds.add(shape.opId);
+    }
+
+    return {
+      version: graph.version,
+      ops: Object.fromEntries(Object.entries(graph.ops || {}).filter(([id]) => nodeIds.has(id))),
+      shapes: Object.fromEntries(Object.entries(graph.shapes || {}).filter(([id]) => nodeIds.has(id))),
+      subshapes: Object.fromEntries(Object.entries(graph.subshapes || {}).filter(([id]) => nodeIds.has(id))),
+      edges: (graph.edges || []).filter((edge) => edgeKeys.has(`${edge.from || ''}->${edge.to || ''}:${edge.opId || ''}:${edge.relation || ''}`))
+    };
+  }
+
+  _render(graph, focus = null) {
     if (!graph) {
       this.clear();
       return;
@@ -186,16 +264,165 @@ class ProvenanceManager {
     const shapes = graph.shapes ? Object.keys(graph.shapes).length : 0;
     const subshapes = graph.subshapes ? Object.keys(graph.subshapes).length : 0;
     const edges = Array.isArray(graph.edges) ? graph.edges.length : 0;
-    this._status.textContent = `Provenance graph: ${ops} ops, ${shapes} shapes, ${subshapes} subshapes, ${edges} links`;
-    this._details.textContent = this._summaryText(graph);
+    const prefix = focus ? `Provenance graph: ${focus.label} trace` : 'Provenance graph';
+    this._status.textContent = `${prefix}: ${ops} ops, ${shapes} shapes, ${subshapes} subshapes, ${edges} links`;
+    this._details.textContent = focus ? this._traceSummaryText(focus.trace, graph) : this._summaryText(graph);
 
     if (!this._cy && !this._initGraph()) { return; }
+    this._applyLayeredPositions(elements);
     this._cy.batch(() => {
       this._cy.elements().remove();
       this._cy.add(elements);
-      this._cy.layout({ name: 'breadthfirst', directed: true, padding: 30, spacingFactor: 1.25, animate: false }).run();
+      this._cy.layout({ name: 'preset', fit: true, padding: 24, animate: false }).run();
     });
     requestAnimationFrame(() => this._cy?.fit(undefined, 24));
+  }
+
+  _applyLayeredPositions(elements) {
+    const nodes = elements.filter((el) => el.data && !el.data.source);
+    const edges = elements.filter((el) => el.data?.source && el.data?.target);
+    if (nodes.length === 0) { return; }
+
+    const byId = new Map(nodes.map((node) => [node.data.id, node]));
+    const outgoing = new Map(nodes.map((node) => [node.data.id, []]));
+    const incomingCount = new Map(nodes.map((node) => [node.data.id, 0]));
+    for (const edge of edges) {
+      const source = edge.data.source;
+      const target = edge.data.target;
+      if (!byId.has(source) || !byId.has(target)) { continue; }
+      outgoing.get(source).push(target);
+      incomingCount.set(target, incomingCount.get(target) + 1);
+    }
+    for (const children of outgoing.values()) {
+      children.sort((a, b) => this._nodeSortKey(byId.get(a)).localeCompare(this._nodeSortKey(byId.get(b))));
+    }
+
+    const roots = nodes
+      .filter((node) => (incomingCount.get(node.data.id) || 0) === 0)
+      .sort((a, b) => this._nodeSortKey(a).localeCompare(this._nodeSortKey(b)))
+      .map((node) => node.data.id);
+    const assigned = new Set();
+    const rowRoots = roots.length ? roots : [];
+    for (const node of nodes.sort((a, b) => this._nodeSortKey(a).localeCompare(this._nodeSortKey(b)))) {
+      if (!rowRoots.includes(node.data.id)) { rowRoots.push(node.data.id); }
+    }
+
+    const depthGap = 150;
+    const leafGap = 150;
+    const rootGap = 220;
+    const leftPad = 90;
+    const topPad = 70;
+    const rowGap = 120;
+    const graphWidth = Math.max(600, this._graphEl?.clientWidth || 0);
+    const maxRowWidth = Math.max(leafGap * 2, graphWidth - leftPad * 2);
+
+    const measureSubtree = (id, visiting = new Set()) => {
+      if (visiting.has(id)) { return { leaves: 1, depth: 0 }; }
+      visiting.add(id);
+      const children = outgoing.get(id) || [];
+      if (children.length === 0) {
+        visiting.delete(id);
+        return { leaves: 1, depth: 0 };
+      }
+      let leaves = 0;
+      let depth = 0;
+      for (const child of children) {
+        const childSpan = measureSubtree(child, visiting);
+        leaves += childSpan.leaves;
+        depth = Math.max(depth, childSpan.depth + 1);
+      }
+      visiting.delete(id);
+      return { leaves: Math.max(1, leaves), depth };
+    };
+
+    const rowBounds = new Map();
+    const trackRowBounds = (rowTop, xPos) => {
+      const bounds = rowBounds.get(rowTop) || { min: Infinity, max: -Infinity };
+      bounds.min = Math.min(bounds.min, xPos);
+      bounds.max = Math.max(bounds.max, xPos);
+      rowBounds.set(rowTop, bounds);
+    };
+
+    // Horizontal tree layout: roots/parents spread left-to-right. Children go
+    // downward. When subtrees fill the visible graph width, later parent/root
+    // nodes wrap to a new row so the graph grows in pages instead of one long line.
+    // Shared/cyclic nodes are placed once; later links point to that existing position.
+    const placeSubtree = (id, depth, cursor, rowTop, visiting = new Set()) => {
+      if (assigned.has(id)) { return { left: cursor, right: cursor, placed: false }; }
+      if (visiting.has(id)) { return { left: cursor, right: cursor, placed: false }; }
+
+      visiting.add(id);
+      assigned.add(id);
+
+      const children = (outgoing.get(id) || []).filter((child) => !assigned.has(child) && !visiting.has(child));
+      let left = cursor;
+      let right = cursor;
+
+      if (children.length === 0) {
+        right = cursor + leafGap;
+      } else {
+        let childCursor = cursor;
+        for (const child of children) {
+          const childSpan = placeSubtree(child, depth + 1, childCursor, rowTop, visiting);
+          if (childSpan.placed) {
+            childCursor = childSpan.right;
+          }
+        }
+        right = Math.max(cursor + leafGap, childCursor);
+      }
+
+      const node = byId.get(id);
+      if (node) {
+        const xPos = (left + right) / 2;
+        node.position = { x: xPos, y: rowTop + topPad + depth * depthGap };
+        node._layoutRowTop = rowTop;
+        trackRowBounds(rowTop, xPos);
+      }
+
+      visiting.delete(id);
+      return { left, right, placed: true };
+    };
+
+    let x = leftPad;
+    let rowTop = 0;
+    let rowDepth = 0;
+    let rowHasNodes = false;
+    for (const root of rowRoots) {
+      if (assigned.has(root)) { continue; }
+      const measured = measureSubtree(root);
+      const estimatedWidth = measured.leaves * leafGap;
+      const usedWidth = x - leftPad;
+      if (rowHasNodes && usedWidth + estimatedWidth > maxRowWidth) {
+        rowTop += topPad + (rowDepth + 1) * depthGap + rowGap;
+        x = leftPad;
+        rowDepth = 0;
+        rowHasNodes = false;
+      }
+      const span = placeSubtree(root, 0, x, rowTop);
+      if (span.placed) {
+        rowDepth = Math.max(rowDepth, measured.depth);
+        rowHasNodes = true;
+      }
+      x = Math.max(x + leafGap, span.right) + rootGap;
+    }
+
+    const targetCenter = leftPad + maxRowWidth / 2;
+    for (const [rowTop, bounds] of rowBounds.entries()) {
+      if (!Number.isFinite(bounds.min) || !Number.isFinite(bounds.max)) { continue; }
+      const rowCenter = (bounds.min + bounds.max) / 2;
+      const offset = targetCenter - rowCenter;
+      for (const node of nodes) {
+        if (node._layoutRowTop === rowTop && node.position) {
+          node.position.x += offset;
+          delete node._layoutRowTop;
+        }
+      }
+    }
+  }
+
+  _nodeSortKey(node) {
+    const raw = node.data?.raw || {};
+    return `${node.data?.type || ''}:${raw.lineNumber ?? raw.historyStepIndex ?? raw.shapeIndex ?? raw.index ?? ''}:${node.data?.id || ''}`;
   }
 
   _toCytoscapeElements(graph) {
@@ -236,6 +463,24 @@ class ProvenanceManager {
       else { addEdge(edge.opId, edge.to, edge.relation, edge.relation, edge); }
     }
     return elements;
+  }
+
+  _traceSummaryText(trace, graph) {
+    if (!trace) { return 'No provenance trace for selection.'; }
+    return JSON.stringify({
+      selected: trace.selected?.subshapeId || null,
+      type: trace.selected?.type || null,
+      shape: trace.selected?.shapeId || null,
+      summary: trace.summary || '',
+      visibleGraph: {
+        ops: Object.keys(graph.ops || {}).length,
+        shapes: Object.keys(graph.shapes || {}).length,
+        subshapes: Object.keys(graph.subshapes || {}).length,
+        edges: Array.isArray(graph.edges) ? graph.edges.length : 0
+      },
+      chain: trace.chain || [],
+      hint: 'Filtered to nodes/edges that created or mutated selected item. Click Show all to restore full graph.'
+    }, null, 2);
   }
 
   _summaryText(graph) {

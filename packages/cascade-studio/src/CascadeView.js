@@ -534,7 +534,7 @@ class CascadeEnvironment {
     this._selectedPartIndex = -1;
   }
 
-  _selectTargetFromEvent(event) {
+  async _selectTargetFromEvent(event) {
     if (!this.mainObject) return;
     this._updateMouseFromEvent(event);
     this.raycaster.setFromCamera(this.mouse, this.environment.camera);
@@ -565,7 +565,8 @@ class CascadeEnvironment {
       line.selectEdgeAtLineIndex(hit.index);
       this._selectedEdgeLine = line;
       this._selectedEdgeIndex = metadata.localEdgeIndex;
-      console.log(this._formatSelectedEdge(metadata.localEdgeIndex, metadata.info || {}));
+      this._app?.provenance?.focusSubshape(metadata.info?.subshapeId, `edge #${metadata.localEdgeIndex}`);
+      console.log(await this._formatSelectedEdge(metadata.localEdgeIndex, metadata.info || {}));
     } else {
       const metadata = hit.object.getFaceMetadataAtTriangle(hit.face);
       if (!metadata) return;
@@ -578,7 +579,8 @@ class CascadeEnvironment {
           renderOrder: 10
         });
         this.mainObject.add(this._selectedPartMesh);
-        console.log(this._formatSelectedPart(metadata.partIndex, metadata.part || metadata.info?.part || null));
+        this._app?.provenance?.focusSubshape(metadata.info?.subshapeId, `part #${metadata.partIndex}`);
+        console.log(await this._formatSelectedPart(metadata.partIndex, metadata.part || metadata.info?.part || null, metadata.info || {}));
       } else {
         this._selectedFaceIndex = metadata.localFaceIndex;
         this._selectedFaceMesh = this._buildFaceHighlightMesh(hit.object, metadata, {
@@ -588,7 +590,8 @@ class CascadeEnvironment {
           renderOrder: 10
         });
         this.mainObject.add(this._selectedFaceMesh);
-        console.log(this._formatSelectedFace(metadata.localFaceIndex, metadata.info || {}));
+        this._app?.provenance?.focusSubshape(metadata.info?.subshapeId, `face #${metadata.localFaceIndex}`);
+        console.log(await this._formatSelectedFace(metadata.localFaceIndex, metadata.info || {}));
       }
     }
     this.environment.viewDirty = true;
@@ -656,7 +659,31 @@ class CascadeEnvironment {
     }
   }
 
-  _formatSelectedEdge(edgeIndex, info = {}) {
+  async _formatSelectionGraph(lines, subshapeId, label = "selected item") {
+    if (!subshapeId || !this._app?.engine?.traceSubshape) return;
+    try {
+      const trace = await this._app.engine.traceSubshape(subshapeId);
+      if (!trace) return;
+      lines.push("", "Graph");
+      lines.push(this._formatSelectionField("Node", trace.selected?.subshapeId || subshapeId));
+      if (trace.selected?.type) lines.push(this._formatSelectionField("Type", trace.selected.type));
+      if (trace.selected?.shapeId) lines.push(this._formatSelectionField("Shape", trace.selected.shapeId));
+      if (trace.summary) lines.push(`  ${trace.summary}`);
+      const chain = Array.isArray(trace.chain) ? trace.chain : [];
+      if (chain.length) {
+        lines.push("", "  Relationships");
+        for (const step of chain) {
+          const from = step.from || "new geometry";
+          const line = step.codeLine || step.lineNumber || "unknown";
+          lines.push(`    ${from} --${step.relation || "related"}/${step.fnName || "unknown"}--> ${step.subshapeId} (line ${line}, ${step.confidence || "unknown"})`);
+        }
+      }
+    } catch (err) {
+      lines.push("", "Graph", `  Could not trace ${label}: ${err?.message || err}`);
+    }
+  }
+
+  async _formatSelectedEdge(edgeIndex, info = {}) {
     const fmtNumber = (value) => Number.isFinite(value) ? Number(value.toFixed(4)).toString() : "unknown";
     const fmtPoint = (point) => Array.isArray(point) ? `[${point.map(fmtNumber).join(", ")}]` : "unknown";
     const lines = [
@@ -688,11 +715,12 @@ class CascadeEnvironment {
       if (Number.isInteger(createdBy.codeLine)) lines.push(this._formatSelectionField("Line", createdBy.codeLine));
       this._formatSelectionCodeHistory(lines, createdBy);
     }
+    await this._formatSelectionGraph(lines, info.subshapeId, `edge #${edgeIndex}`);
 
     return lines.join("\n");
   }
 
-  _formatSelectedFace(faceIndex, info = {}) {
+  async _formatSelectedFace(faceIndex, info = {}) {
     const fmtNumber = (value) => Number.isFinite(value) ? Number(value.toFixed(4)).toString() : "unknown";
     const lines = [
       ...this._formatSelectionHeader(`Selected face #${faceIndex}`),
@@ -711,11 +739,12 @@ class CascadeEnvironment {
       if (Number.isInteger(createdBy.codeLine)) lines.push(this._formatSelectionField("Line", createdBy.codeLine));
       this._formatSelectionCodeHistory(lines, createdBy);
     }
+    await this._formatSelectionGraph(lines, info.subshapeId, `face #${faceIndex}`);
 
     return lines.join("\n");
   }
 
-  _formatSelectedPart(partIndex, part = {}) {
+  async _formatSelectedPart(partIndex, part = {}, info = {}) {
     const source = part?.source || {};
     const lines = [
       ...this._formatSelectionHeader(`Selected part #${partIndex}`),
@@ -729,6 +758,7 @@ class CascadeEnvironment {
     if (Number.isInteger(source.historyStepIndex)) lines.push(this._formatSelectionField("Step", source.historyStepIndex));
     if (Number.isInteger(source.codeLine)) lines.push(this._formatSelectionField("Line", source.codeLine));
     this._formatSelectionCodeHistory(lines, source);
+    await this._formatSelectionGraph(lines, info.subshapeId, `part #${partIndex}`);
     return lines.join("\n");
   }
 
