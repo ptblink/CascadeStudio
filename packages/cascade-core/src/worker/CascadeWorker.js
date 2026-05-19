@@ -211,6 +211,7 @@ class CascadeStudioWorker {
     sceneBuilder.MakeCompound(self.currentShape);
     let fullShapeEdgeHashes = {}; let fullShapeFaceHashes = {};
     let partFaceHashes = {}; let partEdgeHashes = {}; let partMetadata = {};
+    this._faceMetadataByOccurrence = [];
     let lines = String(payload.code || '').split(/\r?\n/);
     postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber++, "opType": "Combining Shapes" } });
 
@@ -238,10 +239,16 @@ class CascadeStudioWorker {
         Object.assign(fullShapeEdgeHashes, self.ForEachEdge(self.sceneShapes[shapeInd], (index, edge) => {
           partEdgeHashes[self.oc.OCJS.HashCode(edge, 100000000)] = shapeInd;
         }));
+        if (!this._faceMetadataByOccurrence) this._faceMetadataByOccurrence = [];
         self.ForEachFace(self.sceneShapes[shapeInd], (index, face) => {
           let faceHash = self.oc.OCJS.HashCode(face, 100000000);
           fullShapeFaceHashes[faceHash] = index;
           partFaceHashes[faceHash] = shapeInd;
+          this._faceMetadataByOccurrence.push({
+            faceHash,
+            faceIndex: index,
+            partIndex: shapeInd
+          });
         });
 
         sceneBuilder.Add(self.currentShape, self.sceneShapes[shapeInd]);
@@ -250,9 +257,12 @@ class CascadeStudioWorker {
       // Use ShapeToMesh to output triangulated faces and discretized edges to the 3D Viewport
       postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber++, "opType": "Triangulating Faces" } });
       let edgeProvenance = this._buildEdgeProvenanceMap(payload.code || '');
+      let faceProvenance = this._buildFaceProvenanceMap(payload.code || '');
+      let faceMetadataByOccurrence = this._faceMetadataByOccurrence || [];
+      this._faceMetadataByOccurrence = [];
       let facesAndEdges = self.ShapeToMesh(self.currentShape,
         payload.maxDeviation || 0.1, fullShapeEdgeHashes, fullShapeFaceHashes, edgeProvenance,
-        partFaceHashes, partEdgeHashes, partMetadata);
+        partFaceHashes, partEdgeHashes, partMetadata, faceProvenance, faceMetadataByOccurrence);
       self.sceneShapes = [];
       postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber, "opType": "" } });
       return [facesAndEdges, payload.sceneOptions];
@@ -262,19 +272,23 @@ class CascadeStudioWorker {
     postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber, "opType": "" } });
   }
 
-  _buildEdgeProvenanceMap(code) {
-    let lines = String(code || '').split(/\r?\n/);
-    let provenance = {};
-    let geometricOrigins = {};
-    const transformOps = new Set(['Translate', 'Rotate', 'Mirror', 'Scale']);
-    const makeRecord = (step, stepIndex, source) => ({
+  _makeProvenanceRecord(step, stepIndex, source) {
+    return {
       historyStepIndex: stepIndex,
       fnName: step.fnName,
       lineNumber: step.lineNumber,
       code: source.code,
       codeLine: source.codeLine,
       codeContext: source.codeContext
-    });
+    };
+  }
+
+  _buildEdgeProvenanceMap(code) {
+    let lines = String(code || '').split(/\r?\n/);
+    let provenance = {};
+    let geometricOrigins = {};
+    const transformOps = new Set(['Translate', 'Rotate', 'Mirror', 'Scale']);
+    const makeRecord = (step, stepIndex, source) => this._makeProvenanceRecord(step, stepIndex, source);
     const edgeSignature = (edge) => {
       if (!self.EdgeInfo) return null;
       try {
@@ -306,17 +320,42 @@ class CascadeStudioWorker {
     return provenance;
   }
 
+  _buildFaceProvenanceMap(code) {
+    let lines = String(code || '').split(/\r?\n/);
+    let provenance = {};
+    let previousFaceHashes = {};
+    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
+      let step = self.modelHistory[stepIndex];
+      let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
+      let record = this._makeProvenanceRecord(step, stepIndex, source);
+      let currentFaceHashes = {};
+      for (let shape of step.shapes || []) {
+        if (!shape || !shape.IsNull || shape.IsNull()) continue;
+        self.ForEachFace(shape, (faceIndex, face) => {
+          let hash = self.oc.OCJS.HashCode(face, 100000000);
+          currentFaceHashes[hash] = true;
+          // History snapshots are cumulative. Attribute only faces that first appear
+          // in this step; otherwise later ops would steal old faces.
+          if (!previousFaceHashes[hash] && !provenance[hash]) provenance[hash] = record;
+        });
+      }
+      previousFaceHashes = currentFaceHashes;
+    }
+    return provenance;
+  }
+
   _getPartSourceReference(lines, shape) {
     let bestStep = null;
     let bestStepIndex = -1;
     let shapeHash = self.oc.OCJS.HashCode(shape, 100000000);
-    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
+    for (let stepIndex = 0; stepIndex < self.modelHistory.length && !bestStep; stepIndex++) {
       let step = self.modelHistory[stepIndex];
       for (let candidate of step.shapes || []) {
         if (!candidate || !candidate.IsNull || candidate.IsNull()) continue;
         if (self.oc.OCJS.HashCode(candidate, 100000000) === shapeHash) {
           bestStep = step;
           bestStepIndex = stepIndex;
+          break;
         }
       }
     }

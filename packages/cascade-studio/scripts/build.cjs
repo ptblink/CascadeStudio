@@ -83,6 +83,11 @@ for (const dir of ['css', 'textures', 'icon', 'lib']) {
     copyDirRecursive(src, path.join(distDir, dir));
   }
 }
+fs.mkdirSync(path.join(distDir, 'lib', 'xterm'), { recursive: true });
+fs.copyFileSync(
+  path.join(monoRoot, 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css'),
+  path.join(distDir, 'lib', 'xterm', 'xterm.css')
+);
 for (const file of ['manifest.webmanifest', 'service-worker.js']) {
   const src = path.join(pkgRoot, file);
   if (fs.existsSync(src)) {
@@ -138,6 +143,7 @@ fs.writeFileSync(path.join(distDir, 'index.html'), `<!DOCTYPE html>
 
         <!-- Dockview CSS -->
         <link rel="stylesheet" href="./lib/dockview-core/dockview.css">
+        <link rel="stylesheet" href="./lib/xterm/xterm.css">
         <link rel="stylesheet" href="./css/main.css">
 
         <!-- Monaco Editor CSS + AMD loader -->

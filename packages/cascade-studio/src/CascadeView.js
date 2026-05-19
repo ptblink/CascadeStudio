@@ -634,35 +634,45 @@ class CascadeEnvironment {
     return mesh;
   }
 
+  _formatSelectionHeader(title) {
+    return [title, "─".repeat(title.length)];
+  }
+
+  _formatSelectionField(label, value) {
+    return `  ${label.padEnd(12, " ")} ${value}`;
+  }
+
   _formatSelectedEdge(edgeIndex, info = {}) {
     const fmtNumber = (value) => Number.isFinite(value) ? Number(value.toFixed(4)).toString() : "unknown";
     const fmtPoint = (point) => Array.isArray(point) ? `[${point.map(fmtNumber).join(", ")}]` : "unknown";
     const lines = [
-      `Selected edge #${edgeIndex}`,
-      `  Type: ${info.type || "unknown"}`,
-      `  Length: ${fmtNumber(info.length)}`
+      ...this._formatSelectionHeader(`Selected edge #${edgeIndex}`),
+      "",
+      "Geometry",
+      this._formatSelectionField("Type", info.type || "unknown"),
+      this._formatSelectionField("Length", fmtNumber(info.length))
     ];
 
     if (info.startPoint || info.endPoint) {
-      lines.push(`  Start: ${fmtPoint(info.startPoint)}`);
-      lines.push(`  End:   ${fmtPoint(info.endPoint)}`);
+      lines.push(this._formatSelectionField("Start", fmtPoint(info.startPoint)));
+      lines.push(this._formatSelectionField("End", fmtPoint(info.endPoint)));
     }
 
     if (info.type === "Line") {
-      lines.push(`  Direction: ${fmtPoint(info.direction)}`);
+      lines.push(this._formatSelectionField("Direction", fmtPoint(info.direction)));
     } else {
-      lines.push(`  Midpoint: ${fmtPoint(info.midpoint)}`);
+      lines.push(this._formatSelectionField("Midpoint", fmtPoint(info.midpoint)));
       const vertices = info.vertex_coord || [];
-      lines.push(`  Segments: ${Math.max(0, vertices.length / 3 - 1)}`);
+      lines.push(this._formatSelectionField("Segments", Math.max(0, vertices.length / 3 - 1)));
     }
 
     const createdBy = info.createdBy;
     if (createdBy) {
-      const where = [];
-      if (Number.isInteger(createdBy.historyStepIndex)) where.push(`history step ${createdBy.historyStepIndex}`);
-      if (Number.isInteger(createdBy.codeLine)) where.push(`line ${createdBy.codeLine}`);
-      lines.push(`  Created by: ${createdBy.fnName || "unknown"}${where.length ? ` (${where.join(", ")})` : ""}`);
-      if (createdBy.code) lines.push(`    ${createdBy.code}`);
+      lines.push("", "History");
+      lines.push(this._formatSelectionField("Created by", createdBy.fnName || "unknown"));
+      if (Number.isInteger(createdBy.historyStepIndex)) lines.push(this._formatSelectionField("Step", createdBy.historyStepIndex));
+      if (Number.isInteger(createdBy.codeLine)) lines.push(this._formatSelectionField("Line", createdBy.codeLine));
+      if (createdBy.code) lines.push("", "Code", `  ${createdBy.code}`);
     }
 
     return lines.join("\n");
@@ -671,29 +681,44 @@ class CascadeEnvironment {
   _formatSelectedFace(faceIndex, info = {}) {
     const fmtNumber = (value) => Number.isFinite(value) ? Number(value.toFixed(4)).toString() : "unknown";
     const lines = [
-      `Selected face #${faceIndex}`,
-      `  Triangles: ${info.number_of_triangles || 0}`
+      ...this._formatSelectionHeader(`Selected face #${faceIndex}`),
+      "",
+      "Geometry",
+      this._formatSelectionField("Triangles", info.number_of_triangles || 0)
     ];
-    if (Number.isFinite(info.face_index)) lines.push(`  Source index: ${fmtNumber(info.face_index)}`);
-    if (Number.isInteger(info.partIndex)) lines.push(`  Part: #${info.partIndex}`);
+    if (Number.isFinite(info.face_index)) lines.push(this._formatSelectionField("Source index", fmtNumber(info.face_index)));
+    if (Number.isInteger(info.partIndex)) lines.push(this._formatSelectionField("Part", `#${info.partIndex}`));
+
+    const createdBy = info.createdBy || info.part?.source || null;
+    if (createdBy) {
+      lines.push("", "History");
+      lines.push(this._formatSelectionField("Created by", createdBy.fnName || "unknown"));
+      if (Number.isInteger(createdBy.historyStepIndex)) lines.push(this._formatSelectionField("Step", createdBy.historyStepIndex));
+      if (Number.isInteger(createdBy.codeLine)) lines.push(this._formatSelectionField("Line", createdBy.codeLine));
+      if (createdBy.code) lines.push("", "Code", `  ${createdBy.code}`);
+    }
+
     return lines.join("\n");
   }
 
   _formatSelectedPart(partIndex, part = {}) {
     const source = part?.source || {};
     const lines = [
-      `Selected part #${partIndex}`,
-      `  Shape type: ${Number.isFinite(part?.shapeType) ? part.shapeType : "unknown"}`
+      ...this._formatSelectionHeader(`Selected part #${partIndex}`),
+      "",
+      "Geometry",
+      this._formatSelectionField("Shape type", Number.isFinite(part?.shapeType) ? part.shapeType : "unknown"),
+      "",
+      "History",
+      this._formatSelectionField("Created by", source.fnName || "unknown")
     ];
-    const where = [];
-    if (Number.isInteger(source.historyStepIndex)) where.push(`history step ${source.historyStepIndex}`);
-    if (Number.isInteger(source.codeLine)) where.push(`line ${source.codeLine}`);
-    lines.push(`  Created by: ${source.fnName || "unknown"}${where.length ? ` (${where.join(", ")})` : ""}`);
+    if (Number.isInteger(source.historyStepIndex)) lines.push(this._formatSelectionField("Step", source.historyStepIndex));
+    if (Number.isInteger(source.codeLine)) lines.push(this._formatSelectionField("Line", source.codeLine));
     const block = source.codeBlock || [];
     if (block.length) {
-      lines.push("  Code:");
+      lines.push("", "Code");
       for (const entry of block) {
-        lines.push(`${String(entry.lineNumber).padStart(4, " ")}: ${entry.code}`);
+        lines.push(`  ${String(entry.lineNumber).padStart(4, " ")}: ${entry.code}`);
       }
     }
     return lines.join("\n");

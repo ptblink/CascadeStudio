@@ -15,6 +15,9 @@ class EditorManager {
     this._pendingEvaluate = false;
     this._suppressAutoEvaluate = false;
     this._changeDisposable = null;
+    this._copyButton = null;
+    this._copyButtonResetTimer = null;
+    this._clearButton = null;
   }
 
   /** Initialize the editor panel inside a DockviewContainer. */
@@ -60,6 +63,7 @@ class EditorManager {
 
     // Initialize the Monaco Code Editor
     const isMobile = window.innerHeight > window.innerWidth;
+    container.element.style.position = container.element.style.position || 'relative';
     const editor = monaco.editor.create(container.element, {
       value: state.code,
       language: "typescript",
@@ -80,6 +84,14 @@ class EditorManager {
     });
     this.editor = editor;
     window.monacoEditor = editor;
+
+    this._copyButton = this._createToolbarButton('Copy', 'Copy code', '56px');
+    this._copyButton.addEventListener('click', () => this.copyCode());
+    container.element.appendChild(this._copyButton);
+
+    this._clearButton = this._createToolbarButton('Clear', 'Clear code', '6px');
+    this._clearButton.addEventListener('click', () => this.clearCode());
+    container.element.appendChild(this._clearButton);
 
     editor.onDidChangeModelContent(() => {
       if (this.editor !== editor || this._suppressAutoEvaluate) { return; }
@@ -117,6 +129,29 @@ class EditorManager {
       this._suppressAutoEvaluate = true;
       this.editor.setValue(code);
       this._suppressAutoEvaluate = false;
+    }
+  }
+
+  /** Copy current editor code to clipboard. */
+  async copyCode() {
+    const text = this.getCode();
+    try {
+      await navigator.clipboard.writeText(text);
+      this._flashCopyButton('Copied');
+    } catch (err) {
+      this._fallbackCopyText(text);
+      this._flashCopyButton('Copied');
+    }
+  }
+
+  /** Clear current editor code. */
+  clearCode() {
+    this.setCode('');
+    if (this._codeContainer) {
+      this._codeContainer.setState({ code: '' });
+    }
+    if (this.editor) {
+      this.editor.focus();
     }
   }
 
@@ -276,6 +311,50 @@ class EditorManager {
   }
 
   /** Set up keyboard shortcuts for evaluation and save. */
+  _createToolbarButton(label, title, right) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.style.position = 'absolute';
+    button.style.top = '4px';
+    button.style.right = right;
+    button.style.zIndex = '1';
+    button.style.padding = '2px 8px';
+    button.style.fontFamily = 'var(--cs-font-ui, sans-serif)';
+    button.style.fontSize = '11px';
+    button.style.color = 'var(--cs-text-primary, #f2f2f2)';
+    button.style.background = 'var(--cs-bg-elevated, #404040)';
+    button.style.border = '1px solid var(--cs-border, #333)';
+    button.style.borderRadius = 'var(--cs-radius, 4px)';
+    button.style.cursor = 'pointer';
+    return button;
+  }
+
+  _fallbackCopyText(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  }
+
+  _flashCopyButton(label) {
+    if (!this._copyButton) return;
+    const oldLabel = this._copyButton.textContent;
+    this._copyButton.textContent = label;
+    clearTimeout(this._copyButtonResetTimer);
+    this._copyButtonResetTimer = setTimeout(() => {
+      if (this._copyButton) this._copyButton.textContent = oldLabel;
+    }, 1000);
+  }
+
   _setupKeyboardShortcuts(container, editor = this.editor) {
     document.onkeydown = (e) => {
       if (e.code === 'F5') {

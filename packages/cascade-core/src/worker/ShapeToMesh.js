@@ -113,7 +113,7 @@ class CascadeStudioMesher {
     };
   }
 
-  shapeToMesh(shape, maxDeviation, fullShapeEdgeHashes, fullShapeFaceHashes, edgeProvenance = {}, partFaceHashes = {}, partEdgeHashes = {}, partMetadata = {}) {
+  shapeToMesh(shape, maxDeviation, fullShapeEdgeHashes, fullShapeFaceHashes, edgeProvenance = {}, partFaceHashes = {}, partEdgeHashes = {}, partMetadata = {}, faceProvenance = {}, faceMetadataByOccurrence = []) {
     let facelist = [], edgeList = [];
     try {
       let oc = self.oc;
@@ -131,16 +131,19 @@ class CascadeStudioMesher {
         if (myT.IsNull()) { console.error("Encountered Null Face!"); for (let k in self.argCache) delete self.argCache[k]; return; }
 
         let faceHash = self.oc.OCJS.HashCode(myFace, 100000000);
-        let partIndex = partFaceHashes[faceHash];
+        let occurrence = faceMetadataByOccurrence[curFace] || null;
+        let partIndex = occurrence?.partIndex ?? partFaceHashes[faceHash];
+        let sourceFaceIndex = occurrence?.faceIndex ?? fullShapeFaceHashes[faceHash];
         let this_face = {
           vertex_coord: [],
           uv_coord: [],
           normal_coord: [],
           tri_indexes: [],
           number_of_triangles: 0,
-          face_index: fullShapeFaceHashes[faceHash],
+          face_index: sourceFaceIndex,
           partIndex,
-          part: partMetadata[partIndex] || null
+          part: partMetadata[partIndex] || null,
+          createdBy: partMetadata[partIndex]?.source || faceProvenance[faceHash] || null
         };
 
         let nbNodes = myT.get().NbNodes();
