@@ -18,6 +18,7 @@ class CascadeStudioMesher {
     // Expose meshing methods on self for use by MainWorker
     self.ShapeToMesh = this.shapeToMesh.bind(this);
     self.LengthOfCurve = CascadeStudioMesher.lengthOfCurve;
+    self.EdgeInfo = CascadeStudioMesher.edgeInfo;
     // Note: ForEachFace/ForEachEdge are assigned to self by CascadeStudioStandardLibrary
   }
 
@@ -65,7 +66,54 @@ class CascadeStudioMesher {
     return edgeHashes;
   }
 
-  shapeToMesh(shape, maxDeviation, fullShapeEdgeHashes, fullShapeFaceHashes) {
+  static edgeInfo(edge) {
+    let oc = self.oc;
+    let curve = new oc.BRepAdaptor_Curve_2(edge);
+    let props = new oc.GProp_GProps_1();
+    oc.BRepGProp.LinearProperties(edge, props, false, false);
+
+    let type = curve.GetType();
+    let CT = oc.GeomAbs_CurveType;
+    let typeName = "Other";
+    if (type === CT.GeomAbs_Line) typeName = "Line";
+    else if (type === CT.GeomAbs_Circle) typeName = "Circle";
+    else if (type === CT.GeomAbs_Ellipse) typeName = "Ellipse";
+    else if (type === CT.GeomAbs_Hyperbola) typeName = "Hyperbola";
+    else if (type === CT.GeomAbs_Parabola) typeName = "Parabola";
+    else if (type === CT.GeomAbs_BezierCurve) typeName = "BezierCurve";
+    else if (type === CT.GeomAbs_BSplineCurve) typeName = "BSplineCurve";
+
+    let firstParameter = curve.FirstParameter();
+    let lastParameter = curve.LastParameter();
+    let start = new oc.gp_Pnt_1();
+    let end = new oc.gp_Pnt_1();
+    let mid = new oc.gp_Pnt_1();
+    curve.D0(firstParameter, start);
+    curve.D0(lastParameter, end);
+    curve.D0((firstParameter + lastParameter) / 2, mid);
+
+    let direction = null;
+    if (type === CT.GeomAbs_Line) {
+      let pnt = new oc.gp_Pnt_1();
+      let vec = new oc.gp_Vec_1();
+      curve.D1(firstParameter, pnt, vec);
+      let mag = vec.Magnitude();
+      if (mag > 1e-10) direction = [vec.X() / mag, vec.Y() / mag, vec.Z() / mag];
+    }
+
+    return {
+      type: typeName,
+      length: props.Mass(),
+      firstParameter,
+      lastParameter,
+      startPoint: [start.X(), start.Y(), start.Z()],
+      endPoint: [end.X(), end.Y(), end.Z()],
+      midpoint: [mid.X(), mid.Y(), mid.Z()],
+      direction
+    };
+  }
+
+  shapeToMesh(shape, maxDeviation, fullShapeEdgeHashes, fullShapeFaceHashes, edgeProvenance = {}, partFaceHashes = {}, partEdgeHashes = {}, partMetadata = {}) {
     let facelist = [], edgeList = [];
     try {
       let oc = self.oc;
@@ -82,13 +130,17 @@ class CascadeStudioMesher {
         let myT = oc.BRep_Tool.Triangulation(myFace, aLocation, 0 /* Poly_MeshPurpose_NONE */);
         if (myT.IsNull()) { console.error("Encountered Null Face!"); for (let k in self.argCache) delete self.argCache[k]; return; }
 
+        let faceHash = self.oc.OCJS.HashCode(myFace, 100000000);
+        let partIndex = partFaceHashes[faceHash];
         let this_face = {
           vertex_coord: [],
           uv_coord: [],
           normal_coord: [],
           tri_indexes: [],
           number_of_triangles: 0,
-          face_index: fullShapeFaceHashes[self.oc.OCJS.HashCode(myFace, 100000000)]
+          face_index: fullShapeFaceHashes[faceHash],
+          partIndex,
+          part: partMetadata[partIndex] || null
         };
 
         let nbNodes = myT.get().NbNodes();
@@ -218,6 +270,10 @@ class CascadeStudioMesher {
             }
 
             this_edge.edge_index = fullShapeEdgeHashes[edgeHash];
+            Object.assign(this_edge, CascadeStudioMesher.edgeInfo(myEdge));
+            this_edge.createdBy = edgeProvenance[edgeHash] || null;
+            this_edge.partIndex = partEdgeHashes[edgeHash];
+            this_edge.part = partMetadata[this_edge.partIndex] || null;
             edgeList.push(this_edge);
           } else {
             fullShapeEdgeHashes2[edgeHash] = edgeHash;
@@ -271,6 +327,10 @@ class CascadeStudioMesher {
           }
 
           this_edge.edge_index = fullShapeEdgeHashes[edgeHash];
+          Object.assign(this_edge, CascadeStudioMesher.edgeInfo(myEdge));
+          this_edge.createdBy = edgeProvenance[edgeHash] || null;
+          this_edge.partIndex = partEdgeHashes[edgeHash];
+          this_edge.part = partMetadata[this_edge.partIndex] || null;
           fullShapeEdgeHashes2[edgeHash] = edgeHash;
           edgeList.push(this_edge);
         }

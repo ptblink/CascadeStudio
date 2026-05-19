@@ -100,6 +100,8 @@ class CascadeEnvironment {
     // State for the Hover Highlighting
     this.raycaster       = new THREE.Raycaster();
     this.highlightedObj  = null;
+    this._hoverFaceMesh  = null;
+    this._altKeyDown     = false;
     this.fogDist         = 200;
 
     // State for the Handles
@@ -139,9 +141,28 @@ class CascadeEnvironment {
 
     // Set up mouse tracking
     this.mouse = { x: 0, y: 0 };
+    this._selectedEdgeLine = null;
+    this._selectedEdgeIndex = -1;
+    this._selectedFaceMesh = null;
+    this._selectedFaceIndex = -1;
+    this._selectedPartMesh = null;
+    this._selectedPartIndex = -1;
+    this._pointerDown = null;
     this.goldenContainer.element.addEventListener('mousemove', (event) => {
-      this.mouse.x =   (event.offsetX / this.goldenContainer.width) * 2 - 1;
-      this.mouse.y = - (event.offsetY / this.goldenContainer.height) * 2 + 1;
+      this._updateMouseFromEvent(event);
+      this._altKeyDown = event.altKey;
+    }, false);
+    this.goldenContainer.element.addEventListener('pointerdown', (event) => {
+      this._pointerDown = { x: event.clientX, y: event.clientY };
+    }, false);
+    this.goldenContainer.element.addEventListener('click', (event) => {
+      this._altKeyDown = event.altKey;
+      if (this._pointerDown) {
+        let dx = event.clientX - this._pointerDown.x;
+        let dy = event.clientY - this._pointerDown.y;
+        if ((dx * dx + dy * dy) > 16) return;
+      }
+      this._selectTargetFromEvent(event);
     }, false);
 
     // Create the timeline overlay DOM
@@ -166,6 +187,8 @@ class CascadeEnvironment {
     this._lastSceneOptions = sceneOptions;
 
     // The old mainObject is dead! Long live the mainObject!
+    this._clearHoverHighlight();
+    this._clearSelection();
     this.environment.scene.remove(this.mainObject);
 
     this.environment.scene.remove(this.groundMesh);
@@ -296,7 +319,9 @@ class CascadeEnvironment {
     // Add Triangulated Faces to Object
     let vertices = [], normals = [], triangles = [], uvs = [], colors = [];
     let vInd = 0; let globalFaceIndex = 0;
+    let faceMetadata = {};
     facelist.forEach((face) => {
+      const triangleStart = triangles.length;
       vertices.push(...face.vertex_coord);
       normals.push(...face.normal_coord);
       uvs.push(...face.uv_coord);
@@ -313,6 +338,16 @@ class CascadeEnvironment {
         colors.push(face.face_index, globalFaceIndex, 0);
       }
 
+      const triangleEnd = triangles.length - 1;
+      faceMetadata[globalFaceIndex] = {
+        localFaceIndex: face.face_index,
+        globalFaceIndex,
+        partIndex: face.partIndex,
+        part: face.part,
+        info: face,
+        triangleStart,
+        triangleEnd
+      };
       globalFaceIndex++;
       vInd += face.vertex_coord.length / 3;
     });
@@ -329,6 +364,12 @@ class CascadeEnvironment {
     let model = new THREE.Mesh(geometry, this.matcapMaterial);
     model.castShadow = true;
     model.name = "Model Faces";
+    model.faceMetadata = faceMetadata;
+    model.getFaceMetadataAtTriangle = function (triangleFace) {
+      if (!triangleFace) return null;
+      const globalIndex = this.geometry.attributes.color.getY(triangleFace.a);
+      return this.faceMetadata[globalIndex] || null;
+    }.bind(model);
     group.add(model);
 
     // Add Highlightable Edges to Object
@@ -338,6 +379,7 @@ class CascadeEnvironment {
     edgelist.forEach((edge) => {
       let edgeMetadata = {};
       edgeMetadata.localEdgeIndex = edge.edge_index;
+      edgeMetadata.info = edge;
       edgeMetadata.start = globalEdgeIndices.length;
       for (let i = 0; i < edge.vertex_coord.length - 3; i += 3) {
         lineVertices.push(new THREE.Vector3(
@@ -359,22 +401,77 @@ class CascadeEnvironment {
     for (let i = 0; i < lineVertices.length; i++) { lineColors.push(0, 0, 0); }
     lineGeometry.setAttribute('color', new THREE.Float32BufferAttribute(lineColors, 3));
     let lineMaterial = new THREE.LineBasicMaterial({
-      color: 0xffffff, linewidth: 1.5, vertexColors: true
+      color: 0xffffff, linewidth: 4, vertexColors: true
     });
     let line = new THREE.LineSegments(lineGeometry, lineMaterial);
     line.globalEdgeIndices = globalEdgeIndices;
     line.name = "Model Edges";
     line.lineColors = lineColors;
     line.globalEdgeMetadata = globalEdgeMetadata;
-    line.highlightEdgeAtLineIndex = function (lineIndex) {
-      let edgeIndex  = lineIndex >= 0 ? this.globalEdgeIndices[lineIndex] : lineIndex;
-      let startIndex = this.globalEdgeMetadata[edgeIndex].start;
-      let endIndex   = this.globalEdgeMetadata[edgeIndex].end;
-      for (let i = 0; i < this.lineColors.length; i++) {
-        let colIndex       = Math.floor(i / 3);
-        this.lineColors[i] = (colIndex >= startIndex && colIndex <= endIndex) ? 1 : 0;
+    line.hoverEdgeIndex = -1;
+    line.selectedEdgeIndex = -1;
+    line.hoverEdgeMesh = null;
+    line.selectedEdgeMesh = null;
+    line.edgeOutlineRadius = Math.max(0.08, (geometry.boundingSphere?.radius || 100) * 0.0008);
+    line.hoverEdgeMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00ffff,
+      depthTest: false,
+      depthWrite: false
+    });
+    line.selectedEdgeMaterial = new THREE.MeshBasicMaterial({
+      color: 0x2d6ba6,
+      depthTest: false,
+      depthWrite: false
+    });
+    line.updateEdgeColors = function () {
+      let hoverMeta = this.globalEdgeMetadata[this.hoverEdgeIndex] || this.globalEdgeMetadata[-1];
+      let selectedMeta = this.globalEdgeMetadata[this.selectedEdgeIndex] || this.globalEdgeMetadata[-1];
+      for (let i = 0; i < this.lineColors.length; i += 3) {
+        let vertexIndex = Math.floor(i / 3);
+        let isSelected = vertexIndex >= selectedMeta.start && vertexIndex <= selectedMeta.end;
+        let isHover = vertexIndex >= hoverMeta.start && vertexIndex <= hoverMeta.end;
+        this.lineColors[i + 0] = isSelected ? 45 / 255 : (isHover ? 0 : 0);
+        this.lineColors[i + 1] = isSelected ? 107 / 255 : (isHover ? 1 : 0);
+        this.lineColors[i + 2] = isSelected ? 166 / 255 : (isHover ? 1 : 0);
       }
       this.geometry.setAttribute('color', new THREE.Float32BufferAttribute(this.lineColors, 3));
+    }.bind(line);
+    line.updateEdgeOutlineMesh = function (edgeIndex, meshProp, material, name) {
+      if (this[meshProp]) {
+        this.parent?.remove(this[meshProp]);
+        this[meshProp].geometry.dispose();
+        this[meshProp] = null;
+      }
+      let meta = this.globalEdgeMetadata[edgeIndex];
+      let coords = meta?.info?.vertex_coord;
+      if (!coords || coords.length < 6) return;
+
+      let points = [];
+      for (let i = 0; i < coords.length; i += 3) {
+        points.push(new THREE.Vector3(coords[i], coords[i + 1], coords[i + 2]));
+      }
+      let curve = points.length === 2
+        ? new THREE.LineCurve3(points[0], points[1])
+        : new THREE.CatmullRomCurve3(points);
+      let tubularSegments = Math.max(8, points.length * 4);
+      let tubeGeometry = new THREE.TubeGeometry(curve, tubularSegments, this.edgeOutlineRadius, 8, false);
+      this[meshProp] = new THREE.Mesh(tubeGeometry, material);
+      this[meshProp].name = name;
+      this[meshProp].renderOrder = 999;
+      this.parent?.add(this[meshProp]);
+    }.bind(line);
+    line.highlightEdgeAtLineIndex = function (lineIndex) {
+      this.hoverEdgeIndex = lineIndex >= 0 ? this.globalEdgeIndices[lineIndex] : -1;
+      this.updateEdgeColors();
+      this.updateEdgeOutlineMesh(this.hoverEdgeIndex, 'hoverEdgeMesh', this.hoverEdgeMaterial, "Hover Edge Outline");
+    }.bind(line);
+    line.updateSelectedEdgeMesh = function () {
+      this.updateEdgeOutlineMesh(this.selectedEdgeIndex, 'selectedEdgeMesh', this.selectedEdgeMaterial, "Selected Edge Outline");
+    }.bind(line);
+    line.selectEdgeAtLineIndex = function (lineIndex) {
+      this.selectedEdgeIndex = lineIndex >= 0 ? this.globalEdgeIndices[lineIndex] : -1;
+      this.updateEdgeColors();
+      this.updateSelectedEdgeMesh();
     }.bind(line);
     line.getEdgeMetadataAtLineIndex = function (lineIndex) {
       return this.globalEdgeMetadata[this.globalEdgeIndices[lineIndex]];
@@ -385,6 +482,221 @@ class CascadeEnvironment {
     group.add(line);
 
     return group;
+  }
+
+  _updateMouseFromEvent(event) {
+    const rect = this.environment.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  }
+
+  _clearHoverHighlight() {
+    if (this.highlightedObj) {
+      this.highlightedObj.material.color.setHex(this.highlightedObj.currentHex);
+      if (this.highlightedObj.clearHighlights) { this.highlightedObj.clearHighlights(); }
+    }
+    if (this._hoverFaceMesh) {
+      if (this._hoverFaceMesh.parent) {
+        this._hoverFaceMesh.parent.remove(this._hoverFaceMesh);
+      } else {
+        this.environment.scene.remove(this._hoverFaceMesh);
+      }
+    }
+    this.highlightedObj = null;
+    this.highlightedIndex = undefined;
+    this._highlightedPartMode = false;
+    this._hoverFaceMesh = null;
+  }
+
+  _clearSelection() {
+    if (this._selectedEdgeLine && this._selectedEdgeLine.selectEdgeAtLineIndex) {
+      this._selectedEdgeLine.selectEdgeAtLineIndex(-1);
+    }
+    if (this._selectedFaceMesh) {
+      if (this._selectedFaceMesh.parent) {
+        this._selectedFaceMesh.parent.remove(this._selectedFaceMesh);
+      } else {
+        this.environment.scene.remove(this._selectedFaceMesh);
+      }
+    }
+    if (this._selectedPartMesh) {
+      if (this._selectedPartMesh.parent) {
+        this._selectedPartMesh.parent.remove(this._selectedPartMesh);
+      } else {
+        this.environment.scene.remove(this._selectedPartMesh);
+      }
+    }
+    this._selectedEdgeLine = null;
+    this._selectedEdgeIndex = -1;
+    this._selectedFaceMesh = null;
+    this._selectedFaceIndex = -1;
+    this._selectedPartMesh = null;
+    this._selectedPartIndex = -1;
+  }
+
+  _selectTargetFromEvent(event) {
+    if (!this.mainObject) return;
+    this._updateMouseFromEvent(event);
+    this.raycaster.setFromCamera(this.mouse, this.environment.camera);
+    const intersects = this.raycaster.intersectObjects(this.mainObject.children);
+
+    this._clearSelection();
+
+    if (intersects.length === 0) {
+      console.log("Selection cleared");
+      this.environment.viewDirty = true;
+      return;
+    }
+
+    const hit = intersects.find((hit) =>
+      hit.object.type === "LineSegments" ||
+      (hit.object.type === "Mesh" && hit.object.name === "Model Faces")
+    );
+
+    if (!hit) {
+      console.log("Selection cleared");
+      this.environment.viewDirty = true;
+      return;
+    }
+
+    if (hit.object.type === "LineSegments") {
+      const line = hit.object;
+      const metadata = line.getEdgeMetadataAtLineIndex(hit.index);
+      line.selectEdgeAtLineIndex(hit.index);
+      this._selectedEdgeLine = line;
+      this._selectedEdgeIndex = metadata.localEdgeIndex;
+      console.log(this._formatSelectedEdge(metadata.localEdgeIndex, metadata.info || {}));
+    } else {
+      const metadata = hit.object.getFaceMetadataAtTriangle(hit.face);
+      if (!metadata) return;
+      if (event.altKey) {
+        this._selectedPartIndex = metadata.partIndex;
+        this._selectedPartMesh = this._buildPartHighlightMesh(hit.object, metadata.partIndex, {
+          name: "Selected Part",
+          color: 0x2d6ba6,
+          opacity: 0.35,
+          renderOrder: 10
+        });
+        this.mainObject.add(this._selectedPartMesh);
+        console.log(this._formatSelectedPart(metadata.partIndex, metadata.part || metadata.info?.part || null));
+      } else {
+        this._selectedFaceIndex = metadata.localFaceIndex;
+        this._selectedFaceMesh = this._buildFaceHighlightMesh(hit.object, metadata, {
+          name: "Selected Face",
+          color: 0x2d6ba6,
+          opacity: 0.35,
+          renderOrder: 10
+        });
+        this.mainObject.add(this._selectedFaceMesh);
+        console.log(this._formatSelectedFace(metadata.localFaceIndex, metadata.info || {}));
+      }
+    }
+    this.environment.viewDirty = true;
+  }
+
+  _buildFaceHighlightMesh(model, metadata, options = {}) {
+    return this._buildFacesHighlightMesh(model, [metadata], options);
+  }
+
+  _buildPartHighlightMesh(model, partIndex, options = {}) {
+    const metas = Object.values(model.faceMetadata || {}).filter((meta) => meta.partIndex === partIndex);
+    return this._buildFacesHighlightMesh(model, metas, options);
+  }
+
+  _buildFacesHighlightMesh(model, metadatas, options = {}) {
+    const sourceGeometry = model.geometry;
+    const index = sourceGeometry.index.array;
+    const positions = sourceGeometry.attributes.position.array;
+    const normals = sourceGeometry.attributes.normal.array;
+    const vertices = [];
+    const selectedNormals = [];
+    for (const metadata of metadatas || []) {
+      for (let i = metadata.triangleStart; i <= metadata.triangleEnd; i++) {
+        const vi = index[i];
+        vertices.push(positions[vi * 3], positions[vi * 3 + 1], positions[vi * 3 + 2]);
+        selectedNormals.push(normals[vi * 3], normals[vi * 3 + 1], normals[vi * 3 + 2]);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(selectedNormals, 3));
+    const material = new THREE.MeshBasicMaterial({
+      color: options.color ?? 0x2d6ba6,
+      transparent: true,
+      opacity: options.opacity ?? 0.35,
+      depthTest: true,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = options.name || "Face Highlight";
+    mesh.renderOrder = options.renderOrder ?? 10;
+    return mesh;
+  }
+
+  _formatSelectedEdge(edgeIndex, info = {}) {
+    const fmtNumber = (value) => Number.isFinite(value) ? Number(value.toFixed(4)).toString() : "unknown";
+    const fmtPoint = (point) => Array.isArray(point) ? `[${point.map(fmtNumber).join(", ")}]` : "unknown";
+    const lines = [
+      `Selected edge #${edgeIndex}`,
+      `  Type: ${info.type || "unknown"}`,
+      `  Length: ${fmtNumber(info.length)}`
+    ];
+
+    if (info.startPoint || info.endPoint) {
+      lines.push(`  Start: ${fmtPoint(info.startPoint)}`);
+      lines.push(`  End:   ${fmtPoint(info.endPoint)}`);
+    }
+
+    if (info.type === "Line") {
+      lines.push(`  Direction: ${fmtPoint(info.direction)}`);
+    } else {
+      lines.push(`  Midpoint: ${fmtPoint(info.midpoint)}`);
+      const vertices = info.vertex_coord || [];
+      lines.push(`  Segments: ${Math.max(0, vertices.length / 3 - 1)}`);
+    }
+
+    const createdBy = info.createdBy;
+    if (createdBy) {
+      const where = [];
+      if (Number.isInteger(createdBy.historyStepIndex)) where.push(`history step ${createdBy.historyStepIndex}`);
+      if (Number.isInteger(createdBy.codeLine)) where.push(`line ${createdBy.codeLine}`);
+      lines.push(`  Created by: ${createdBy.fnName || "unknown"}${where.length ? ` (${where.join(", ")})` : ""}`);
+      if (createdBy.code) lines.push(`    ${createdBy.code}`);
+    }
+
+    return lines.join("\n");
+  }
+
+  _formatSelectedFace(faceIndex, info = {}) {
+    const fmtNumber = (value) => Number.isFinite(value) ? Number(value.toFixed(4)).toString() : "unknown";
+    const lines = [
+      `Selected face #${faceIndex}`,
+      `  Triangles: ${info.number_of_triangles || 0}`
+    ];
+    if (Number.isFinite(info.face_index)) lines.push(`  Source index: ${fmtNumber(info.face_index)}`);
+    if (Number.isInteger(info.partIndex)) lines.push(`  Part: #${info.partIndex}`);
+    return lines.join("\n");
+  }
+
+  _formatSelectedPart(partIndex, part = {}) {
+    const source = part?.source || {};
+    const lines = [
+      `Selected part #${partIndex}`,
+      `  Shape type: ${Number.isFinite(part?.shapeType) ? part.shapeType : "unknown"}`
+    ];
+    const where = [];
+    if (Number.isInteger(source.historyStepIndex)) where.push(`history step ${source.historyStepIndex}`);
+    if (Number.isInteger(source.codeLine)) where.push(`line ${source.codeLine}`);
+    lines.push(`  Created by: ${source.fnName || "unknown"}${where.length ? ` (${where.join(", ")})` : ""}`);
+    const block = source.codeBlock || [];
+    if (block.length) {
+      lines.push("  Code:");
+      for (const entry of block) {
+        lines.push(`${String(entry.lineNumber).padStart(4, " ")}: ${entry.code}`);
+      }
+    }
+    return lines.join("\n");
   }
 
   /** Create the timeline overlay DOM elements. */
@@ -633,35 +945,52 @@ class CascadeEnvironment {
     if (this.mainObject) {
       this.raycaster.setFromCamera(this.mouse, this.environment.camera);
       let intersects = this.raycaster.intersectObjects(this.mainObject.children);
-      if (this.environment.controls.state < 0 && intersects.length > 0) {
-        let isLine = intersects[0].object.type === "LineSegments";
+      const hit = intersects.find((hit) =>
+        hit.object.type === "LineSegments" ||
+        (hit.object.type === "Mesh" && hit.object.name === "Model Faces")
+      );
+      if (this.environment.controls.state < 0 && hit) {
+        let isLine = hit.object.type === "LineSegments";
+        let faceMetadata = !isLine ? hit.object.getFaceMetadataAtTriangle(hit.face) : null;
+        let isPartHover = !isLine && this._altKeyDown;
         let newIndex = isLine
-          ? intersects[0].object.getEdgeMetadataAtLineIndex(intersects[0].index).localEdgeIndex
-          : intersects[0].object.geometry.attributes.color.getX(intersects[0].face.a);
-        if (this.highlightedObj != intersects[0].object || this.highlightedIndex !== newIndex) {
-          if (this.highlightedObj) {
-            this.highlightedObj.material.color.setHex(this.highlightedObj.currentHex);
-            if (this.highlightedObj && this.highlightedObj.clearHighlights) {
-              this.highlightedObj.clearHighlights();
-            }
-          }
-          this.highlightedObj = intersects[0].object;
+          ? hit.object.getEdgeMetadataAtLineIndex(hit.index).localEdgeIndex
+          : (isPartHover ? faceMetadata?.partIndex : hit.object.geometry.attributes.color.getX(hit.face.a));
+        if (this.highlightedObj != hit.object || this.highlightedIndex !== newIndex || this._highlightedPartMode !== isPartHover) {
+          this._clearHoverHighlight();
+          this.highlightedObj = hit.object;
           this.highlightedObj.currentHex = this.highlightedObj.material.color.getHex();
-          this.highlightedObj.material.color.setHex(0xffffff);
           this.highlightedIndex = newIndex;
-          if (isLine) { this.highlightedObj.highlightEdgeAtLineIndex(intersects[0].index); }
+          this._highlightedPartMode = isPartHover;
+          if (isLine) {
+            this.highlightedObj.material.color.setHex(0xffffff);
+            this.highlightedObj.highlightEdgeAtLineIndex(hit.index);
+          } else if (faceMetadata) {
+            this._hoverFaceMesh = isPartHover
+              ? this._buildPartHighlightMesh(this.highlightedObj, faceMetadata.partIndex, {
+                  name: "Hovered Part",
+                  color: 0x00e5ff,
+                  opacity: 0.55,
+                  renderOrder: 9
+                })
+              : this._buildFaceHighlightMesh(this.highlightedObj, faceMetadata, {
+                  name: "Hovered Face",
+                  color: 0x00e5ff,
+                  opacity: 0.55,
+                  renderOrder: 9
+                });
+            this.mainObject.add(this._hoverFaceMesh);
+          }
           this.environment.viewDirty = true;
         }
 
-        let indexHelper = (isLine ? "Edge" : "Face") + " Index: " + this.highlightedIndex;
+        let indexHelper = (isLine ? "Edge" : (isPartHover ? "Part" : "Face")) + " Index: " + this.highlightedIndex;
         this.goldenContainer.element.title = indexHelper;
       } else {
-        if (this.highlightedObj) {
-          this.highlightedObj.material.color.setHex(this.highlightedObj.currentHex);
-          if (this.highlightedObj.clearHighlights) { this.highlightedObj.clearHighlights(); }
+        if (this.highlightedObj || this._hoverFaceMesh) {
+          this._clearHoverHighlight();
           this.environment.viewDirty = true;
         }
-        this.highlightedObj = null;
         this.goldenContainer.element.title = "";
       }
     }

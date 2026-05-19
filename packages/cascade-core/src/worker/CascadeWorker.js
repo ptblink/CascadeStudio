@@ -210,6 +210,8 @@ class CascadeStudioWorker {
     // Note: BRep_Builder and TopoDS_Compound have no overloaded constructors in v2
     sceneBuilder.MakeCompound(self.currentShape);
     let fullShapeEdgeHashes = {}; let fullShapeFaceHashes = {};
+    let partFaceHashes = {}; let partEdgeHashes = {}; let partMetadata = {};
+    let lines = String(payload.code || '').split(/\r?\n/);
     postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber++, "opType": "Combining Shapes" } });
 
     // If there are sceneShapes, iterate through them and add them to currentShape
@@ -227,9 +229,19 @@ class CascadeStudioWorker {
         }
 
         // Scan the edges and faces and add to the edge list
-        Object.assign(fullShapeEdgeHashes, self.ForEachEdge(self.sceneShapes[shapeInd], (index, edge) => { }));
+        let partSource = this._getPartSourceReference(lines, self.sceneShapes[shapeInd]);
+        partMetadata[shapeInd] = {
+          partIndex: shapeInd,
+          shapeType: self.sceneShapes[shapeInd].ShapeType().value,
+          source: partSource
+        };
+        Object.assign(fullShapeEdgeHashes, self.ForEachEdge(self.sceneShapes[shapeInd], (index, edge) => {
+          partEdgeHashes[self.oc.OCJS.HashCode(edge, 100000000)] = shapeInd;
+        }));
         self.ForEachFace(self.sceneShapes[shapeInd], (index, face) => {
-          fullShapeFaceHashes[self.oc.OCJS.HashCode(face, 100000000)] = index;
+          let faceHash = self.oc.OCJS.HashCode(face, 100000000);
+          fullShapeFaceHashes[faceHash] = index;
+          partFaceHashes[faceHash] = shapeInd;
         });
 
         sceneBuilder.Add(self.currentShape, self.sceneShapes[shapeInd]);
@@ -237,8 +249,10 @@ class CascadeStudioWorker {
 
       // Use ShapeToMesh to output triangulated faces and discretized edges to the 3D Viewport
       postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber++, "opType": "Triangulating Faces" } });
+      let edgeProvenance = this._buildEdgeProvenanceMap(payload.code || '');
       let facesAndEdges = self.ShapeToMesh(self.currentShape,
-        payload.maxDeviation || 0.1, fullShapeEdgeHashes, fullShapeFaceHashes);
+        payload.maxDeviation || 0.1, fullShapeEdgeHashes, fullShapeFaceHashes, edgeProvenance,
+        partFaceHashes, partEdgeHashes, partMetadata);
       self.sceneShapes = [];
       postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber, "opType": "" } });
       return [facesAndEdges, payload.sceneOptions];
@@ -246,6 +260,139 @@ class CascadeStudioWorker {
       console.error("There were no scene shapes returned!");
     }
     postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber, "opType": "" } });
+  }
+
+  _buildEdgeProvenanceMap(code) {
+    let lines = String(code || '').split(/\r?\n/);
+    let provenance = {};
+    let geometricOrigins = {};
+    const transformOps = new Set(['Translate', 'Rotate', 'Mirror', 'Scale']);
+    const makeRecord = (step, stepIndex, source) => ({
+      historyStepIndex: stepIndex,
+      fnName: step.fnName,
+      lineNumber: step.lineNumber,
+      code: source.code,
+      codeLine: source.codeLine,
+      codeContext: source.codeContext
+    });
+    const edgeSignature = (edge) => {
+      if (!self.EdgeInfo) return null;
+      try {
+        let info = self.EdgeInfo(edge);
+        return `${info.type}|${Math.round((info.length || 0) * 1e6)}`;
+      } catch (e) {
+        return null;
+      }
+    };
+
+    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
+      let step = self.modelHistory[stepIndex];
+      let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
+      let isTransform = transformOps.has(step.fnName);
+      for (let shape of step.shapes || []) {
+        if (!shape || !shape.IsNull || shape.IsNull()) continue;
+        self.ForEachEdge(shape, (edgeIndex, edge) => {
+          let hash = self.oc.OCJS.HashCode(edge, 100000000);
+          let signature = edgeSignature(edge);
+          let record = (!isTransform || !signature || !geometricOrigins[signature])
+            ? makeRecord(step, stepIndex, source)
+            : geometricOrigins[signature];
+
+          if (!provenance[hash]) provenance[hash] = record;
+          if (!isTransform && signature && !geometricOrigins[signature]) geometricOrigins[signature] = record;
+        });
+      }
+    }
+    return provenance;
+  }
+
+  _getPartSourceReference(lines, shape) {
+    let bestStep = null;
+    let bestStepIndex = -1;
+    let shapeHash = self.oc.OCJS.HashCode(shape, 100000000);
+    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
+      let step = self.modelHistory[stepIndex];
+      for (let candidate of step.shapes || []) {
+        if (!candidate || !candidate.IsNull || candidate.IsNull()) continue;
+        if (self.oc.OCJS.HashCode(candidate, 100000000) === shapeHash) {
+          bestStep = step;
+          bestStepIndex = stepIndex;
+        }
+      }
+    }
+    let source = bestStep
+      ? this._getSourceReference(lines, bestStep.lineNumber, bestStep.fnName)
+      : { codeLine: null, code: '', codeContext: [] };
+    let block = this._getSourceBlock(lines, source.codeLine);
+    return Object.assign({ historyStepIndex: bestStepIndex, fnName: bestStep?.fnName || 'unknown' }, source, { codeBlock: block });
+  }
+
+  _getSourceBlock(lines, lineNumber) {
+    let index = Number.isFinite(lineNumber) ? lineNumber - 1 : -1;
+    if (index < 0 || index >= lines.length) return [];
+    let start = index;
+    while (start > 0 && lines[start - 1].trim() && !lines[start - 1].trim().startsWith('//')) start--;
+    let end = index;
+    while (end < lines.length - 1 && lines[end].trim() && !lines[end].trim().endsWith(';')) end++;
+    return lines.slice(start, end + 1).map((code, i) => ({ lineNumber: start + i + 1, code }));
+  }
+
+  _getSourceReference(lines, lineNumber, fnName) {
+    let index = Number.isFinite(lineNumber) ? Math.max(0, lineNumber - 1) : -1;
+    let codeLine = index >= 0 ? (lines[index] || '') : '';
+    let searchName = String(fnName || '');
+
+    // Stack-derived line numbers can point at wrapper/comment/blank lines.
+    // Prefer nearest line that actually names the operation; otherwise nearest non-empty line.
+    let hasOperation = false;
+    if (searchName && codeLine.trim()) {
+      let currentPattern = new RegExp('(?:^|[^A-Za-z0-9_$])' + searchName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\(');
+      hasOperation = currentPattern.test(codeLine);
+    }
+    if (!codeLine.trim() || (searchName && !hasOperation)) {
+      let best = -1;
+      if (searchName) {
+        let pattern = new RegExp('(?:^|[^A-Za-z0-9_$])' + searchName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\(');
+        for (let radius = 0; radius <= 8 && best < 0; radius++) {
+          for (let candidate of [index - radius, index + radius]) {
+            if (candidate >= 0 && candidate < lines.length && pattern.test(lines[candidate])) {
+              best = candidate;
+              break;
+            }
+          }
+        }
+        // If stack line is bogus (often line 1 from eval wrappers), scan whole user code.
+        // Never fall back to arbitrary non-empty/comment line for named ops.
+        for (let candidate = 0; candidate < lines.length && best < 0; candidate++) {
+          if (pattern.test(lines[candidate])) best = candidate;
+        }
+      }
+      for (let radius = 0; radius <= 4 && best < 0 && !searchName; radius++) {
+        for (let candidate of [index - radius, index + radius]) {
+          if (candidate >= 0 && candidate < lines.length && lines[candidate].trim() && !lines[candidate].trim().startsWith('//')) {
+            best = candidate;
+            break;
+          }
+        }
+      }
+      if (best >= 0) {
+        index = best;
+        codeLine = lines[index] || '';
+      }
+    }
+
+    let start = Math.max(0, index - 2);
+    let end = Math.min(lines.length - 1, index + 2);
+    let codeContext = [];
+    for (let i = start; i <= end; i++) {
+      codeContext.push({ lineNumber: i + 1, code: lines[i] });
+    }
+
+    return {
+      code: codeLine,
+      codeLine: index >= 0 ? index + 1 : lineNumber,
+      codeContext
+    };
   }
 
   /** Triangulate and return the shapes from a specific modeling history step.

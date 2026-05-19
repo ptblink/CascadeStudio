@@ -139,7 +139,6 @@ class EditorManager {
       return;
     }
     if (!this._app.engine || !this._app.engine.isReady) { return; }
-    window.workerWorking = true;
 
     monaco.languages.typescript.typescriptDefaults.setExtraLibs(this._extraLibs);
     let newCode = this.editor.getValue();
@@ -149,6 +148,14 @@ class EditorManager {
     if (!preserveConsole) { this._app.console.clear(); }
     this._app.gui.reset();
     if (this._app.viewport) this._app.viewport.clearTransformHandles();
+
+    if (!newCode.trim()) {
+      if (!preserveConsole) { this._app.console.showWelcome(true); }
+      this._codeContainer.setState({ code: newCode });
+      return;
+    }
+
+    window.workerWorking = true;
 
     // Transpile OpenSCAD if needed
     let codeToEval = newCode;

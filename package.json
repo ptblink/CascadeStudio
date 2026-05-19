@@ -25,6 +25,7 @@
 	"scripts": {
 		"postinstall": "node packages/cascade-studio/scripts/postinstall.cjs",
 		"build": "node packages/cascade-core/scripts/build.cjs && node packages/cascade-studio/scripts/build.cjs",
+		"dev": "node scripts/dev.cjs",
 		"test": "playwright test"
 	}
 }

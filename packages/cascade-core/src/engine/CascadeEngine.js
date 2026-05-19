@@ -73,6 +73,7 @@ class CascadeEngine {
     // Request meshing — this returns a Promise that resolves with [facesAndEdges, sceneOptions]
     const result = await this._messageBus.request('combineAndRenderShapes', {
       maxDeviation: maxDeviation || guiState['MeshRes'] || 0.1,
+      code,
       sceneOptions: sceneOptions || {
         groundPlaneVisible: guiState['GroundPlane?'],
         gridVisible: guiState['Grid?']

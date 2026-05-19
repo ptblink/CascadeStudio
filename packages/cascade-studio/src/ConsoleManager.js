@@ -9,6 +9,7 @@ class ConsoleManager {
     this.logs = [];
     this.errors = [];
     this._consoleContainer = null;
+    this._clearButton = null;
     this._consoleGolden = null;
     this._realConsoleLog = null;
     this._progressLines = new Map();
@@ -18,10 +19,38 @@ class ConsoleManager {
   /** Initialize the console panel inside a DockviewContainer. */
   initPanel(container) {
     this._consoleGolden = container;
-    this._consoleContainer = document.createElement("div");
-    container.element.appendChild(this._consoleContainer);
-    container.element.style.overflow  = 'auto';
+    container.element.innerHTML = '';
+    container.element.style.position = 'relative';
+    container.element.style.overflow  = 'hidden';
     container.element.style.boxShadow = "inset 0px 0px 3px rgba(0,0,0,0.75)";
+
+    this._consoleContainer = document.createElement("div");
+    this._consoleContainer.style.position = 'absolute';
+    this._consoleContainer.style.inset = '0';
+    this._consoleContainer.style.overflow = 'auto';
+    this._consoleContainer.style.paddingTop = '26px';
+    this._consoleContainer.style.paddingRight = '72px';
+    container.element.appendChild(this._consoleContainer);
+
+    this._clearButton = document.createElement('button');
+    this._clearButton.type = 'button';
+    this._clearButton.textContent = 'Clear';
+    this._clearButton.title = 'Clear console';
+    this._clearButton.setAttribute('aria-label', 'Clear console');
+    this._clearButton.style.position = 'absolute';
+    this._clearButton.style.top = '4px';
+    this._clearButton.style.right = '6px';
+    this._clearButton.style.zIndex = '1';
+    this._clearButton.style.padding = '2px 8px';
+    this._clearButton.style.fontFamily = 'var(--cs-font-ui, sans-serif)';
+    this._clearButton.style.fontSize = '11px';
+    this._clearButton.style.color = 'var(--cs-text-primary, #f2f2f2)';
+    this._clearButton.style.background = 'var(--cs-bg-elevated, #404040)';
+    this._clearButton.style.border = '1px solid var(--cs-border, #333)';
+    this._clearButton.style.borderRadius = 'var(--cs-radius, 4px)';
+    this._clearButton.style.cursor = 'pointer';
+    this._clearButton.addEventListener('click', () => this.clear());
+    container.element.appendChild(this._clearButton);
 
     if (!this._initialized) {
       this._initialized = true;
@@ -39,7 +68,7 @@ class ConsoleManager {
         newline.style.fontSize = "1.2em";
         newline.textContent = "Line " + line + ": " + errorText;
         this._consoleContainer.appendChild(newline);
-        this._consoleContainer.parentElement.scrollTop = this._consoleContainer.parentElement.scrollHeight;
+        this._consoleContainer.scrollTop = this._consoleContainer.scrollHeight;
 
         if (!errorObj || !(errorObj.stack.includes("wasm-function"))) {
           const editor = this._app.editor.editor;
@@ -56,8 +85,7 @@ class ConsoleManager {
         }
       };
 
-      console.log("Welcome to Cascade Studio!");
-      console.log("Loading CAD Kernel...");
+      this.showWelcome(false);
     }
   }
 
@@ -71,9 +99,16 @@ class ConsoleManager {
   clear() {
     this.logs = [];
     this.errors = [];
+    this._progressLines.clear();
     if (this._consoleContainer) {
       this._consoleContainer.innerHTML = '';
     }
+  }
+
+  /** Display idle startup message without evaluating geometry. */
+  showWelcome(kernelReady = true) {
+    console.log("Welcome to Cascade Studio!");
+    console.log(kernelReady ? "CAD Kernel ready. Import STEP file or choose from existing parametrised fixtures." : "Loading CAD Kernel...");
   }
 
   /** Get the container (for state persistence of imported files). */
@@ -108,7 +143,7 @@ class ConsoleManager {
       this._progressLines.set(id, line);
     }
     line.textContent = text;
-    this._consoleContainer.parentElement.scrollTop = this._consoleContainer.parentElement.scrollHeight;
+    this._consoleContainer.scrollTop = this._consoleContainer.scrollHeight;
 
     if (options.done || normalized === 100) {
       line.style.color = '#b5cea8';
@@ -143,7 +178,7 @@ class ConsoleManager {
       newline.style.fontSize = "1.2em";
       newline.textContent = ">  " + messageText;
       self._consoleContainer.appendChild(newline);
-      self._consoleContainer.parentElement.scrollTop = self._consoleContainer.parentElement.scrollHeight;
+      self._consoleContainer.scrollTop = self._consoleContainer.scrollHeight;
       self._realConsoleLog.apply(console, args);
     };
   }
