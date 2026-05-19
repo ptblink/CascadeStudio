@@ -22,10 +22,10 @@ Write in JavaScript or OpenSCAD, visualize in real-time, and export to `.step`, 
 
 This repo is forked from the original [zalo/CascadeStudio](https://github.com/zalo/CascadeStudio). Main user-facing changes in this fork:
 
-- **Local development now uses `npm run dev`** instead of `npx http-server ./packages/cascade-studio/dist -p 8080 -c-1`.
-- `npm run dev` builds once, serves `packages/cascade-studio/dist/`, watches source files, rebuilds on change, disables caching, and reloads the browser.
-- `npm run build` still creates the production/static build in `packages/cascade-studio/dist/`.
-- The app remains available at `http://127.0.0.1:8080` by default. Override with `PORT=8081 npm run dev` or `npm run dev -- --port 8081`.
+- **Local development now uses the npm dev script** instead of manually serving the built `dist` folder with `http-server`.
+- The dev script builds once, serves `packages/cascade-studio/dist/`, watches source files, rebuilds on change, disables caching, and reloads the browser.
+- The build script still creates the production/static build in `packages/cascade-studio/dist/`.
+- The app remains available at `http://127.0.0.1:8080` by default. Use a custom port if needed.
 
 ## Features
 
