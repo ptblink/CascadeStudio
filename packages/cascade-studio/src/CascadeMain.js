@@ -100,6 +100,14 @@ class CascadeStudioApp {
     window.loadProject = () => this.loadProject();
     window.loadFiles = (id) => this.loadFiles(id);
     window.clearExternalFiles = () => this.clearExternalFiles();
+    window.saveSTEP = () => {
+      console.log("Save STEP clicked.");
+      if (!this.viewport) {
+        console.error("Save STEP failed: viewport is not ready yet.");
+        return;
+      }
+      return this.viewport.saveShapeSTEP();
+    };
     window.generateSTEPImportCode = (fileName) => this.generateSTEPImportCode(fileName);
 
     // Install the programmatic API

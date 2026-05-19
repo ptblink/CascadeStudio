@@ -252,6 +252,7 @@ Revolve(profile, 360);`,
   getSTEP() { return this._app.engine.exportSTEP(); }
   getExternalFileNames() { return this._app.engine.getExternalFileNames(); }
   analyzeSTEP(fileName) { return this._app.engine.analyzeSTEP(fileName); }
+  compareCurrentShapeToSTEP(fileName, tolerance = 0.25) { return this._app.engine.compareCurrentShapeToSTEP(fileName, tolerance); }
   generateSTEPImportCode(fileName) { return this._app.engine.generateSTEPImportCode(fileName); }
   getSTL() {
     const viewport = this._app.viewport;

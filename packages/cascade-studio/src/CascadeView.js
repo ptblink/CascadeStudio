@@ -952,16 +952,22 @@ class CascadeEnvironment {
   /** Save the current shape to .step. */
   async saveShapeSTEP() {
     try {
-      const stepContent = await this._app.engine.exportSTEP();
+      // showSaveFilePicker must run directly from the user gesture.
+      // Pick the destination first, then await worker STEP export.
       if (window.showSaveFilePicker) {
-        const fileHandle = await this._getNewFileHandle("STEP files", "text/plain", "step");
-        this._writeFile(fileHandle, stepContent).then(() => {
-          console.log("Saved STEP to " + fileHandle.name);
-        });
+        console.log("Opening native STEP save dialog...");
+        const fileHandle = await this._getNewFileHandle("STEP files", "model/step", "step");
+        console.log("Exporting STEP...");
+        const stepContent = await this._app.engine.exportSTEP();
+        await this._writeFile(fileHandle, stepContent);
+        console.log("Saved STEP to " + fileHandle.name);
       } else {
+        console.error("Native save dialog unavailable: this browser does not support window.showSaveFilePicker. Use Chrome/Edge on localhost/HTTPS, or the browser will download the STEP file instead.");
+        const stepContent = await this._app.engine.exportSTEP();
         await this._downloadFile(stepContent, "Untitled", "model/step", "step");
       }
     } catch (e) {
+      if (e && e.name === "AbortError") { return; }
       console.error("Failed to export STEP: " + e.message);
     }
   }

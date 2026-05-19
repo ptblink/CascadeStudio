@@ -124,6 +124,11 @@ class CascadeEngine {
     return this._messageBus.request('analyzeSTEP', { fileName });
   }
 
+  /** Compare current evaluated shape to an imported STEP file. */
+  async compareCurrentShapeToSTEP(fileName, tolerance = 0.25) {
+    return this._messageBus.request('compareCurrentShapeToSTEP', { fileName, tolerance });
+  }
+
   /** Generate CascadeStudio JS for an imported STEP file. */
   async generateSTEPImportCode(fileName) {
     return this._messageBus.request('generateSTEPImportCode', { fileName });

@@ -9,6 +9,7 @@ class CascadeStudioFileIO {
     self.messageHandlers["getExternalFileNames"] = () => Object.keys(self.externalShapes).filter(k => !k.includes('#'));
     self.messageHandlers["saveShapeSTEP"] = this.saveShapeSTEP.bind(this);
     self.messageHandlers["analyzeSTEP"] = this.analyzeSTEP.bind(this);
+    self.messageHandlers["compareCurrentShapeToSTEP"] = this.compareCurrentShapeToSTEP.bind(this);
     self.messageHandlers["generateSTEPImportCode"] = this.generateSTEPImportCode.bind(this);
     self.messageHandlers["clearExternalFiles"] = () => { self.externalShapes = {}; self.externalFileTexts = {}; };
 
@@ -19,6 +20,7 @@ class CascadeStudioFileIO {
     self.importSTL = this.importSTL.bind(this);
     self.saveShapeSTEP = this.saveShapeSTEP.bind(this);
     self.analyzeSTEP = this.analyzeSTEP.bind(this);
+    self.compareCurrentShapeToSTEP = this.compareCurrentShapeToSTEP.bind(this);
     self.generateSTEPImportCode = this.generateSTEPImportCode.bind(this);
     self.renderStepAssembly = this.renderStepAssembly.bind(this);
     self.externalFileTexts = self.externalFileTexts || {};
@@ -181,10 +183,23 @@ class CascadeStudioFileIO {
     return this._buildSTEPAnalysis(fileName, self.externalShapes[fileName], self.externalFileTexts[fileName] || "");
   }
 
+  /** Compare the current evaluated shape against an imported STEP shape. */
+  compareCurrentShapeToSTEP(payload = {}) {
+    const fileName = typeof payload === 'string' ? payload : payload.fileName;
+    const tolerance = Number(payload.tolerance ?? 0.25);
+    if (!fileName || !self.externalShapes[fileName]) {
+      return { success: false, fileName, warnings: ["STEP file is not loaded: " + fileName] };
+    }
+    if (!self.currentShape) {
+      return { success: false, fileName, warnings: ["No current shape to compare. Evaluate generated JS first."] };
+    }
+    return this._compareShapes(self.externalShapes[fileName], self.currentShape, { tolerance });
+  }
+
   /** Generate CascadeStudio JS that renders an imported STEP assembly by manifest. */
   generateSTEPImportCode(payload = {}) {
     const analysis = this.analyzeSTEP(payload);
-    return this._generateSTEPImportCode(analysis);
+    return this._generateSTEPImportCode(analysis, payload);
   }
 
   /** Render an exact imported STEP assembly from a generated manifest. */
@@ -226,7 +241,8 @@ class CascadeStudioFileIO {
   }
 
   _buildSTEPAnalysis(fileName, rootShape, fileText = "") {
-    const labels = this._extractSTEPProductNames(fileText);
+    const productContexts = this._extractSTEPProductContexts(fileText);
+    const labels = productContexts.map(p => p.name);
     const shapes = this._collectSubShapes(rootShape);
     const warnings = [];
     const parts = shapes.map((shape, index) => {
@@ -241,13 +257,14 @@ class CascadeStudioFileIO {
         visible: true,
         translate: [0, 0, 0],
         rotate: [0, 0, 0],
+        stepContext: productContexts[index]?.records || [],
         approximate: this._approximateShape(shape),
         shape
       };
     });
     if (parts.length === 0) {
       warnings.push('No sub-shapes found; generated code will render the combined STEP shape.');
-      parts.push({ id: 'assembly_001', label: labels[0] || 'Imported Assembly', shapeKey: fileName, source: fileName, visible: true, translate: [0, 0, 0], rotate: [0, 0, 0], shape: rootShape });
+      parts.push({ id: 'assembly_001', label: labels[0] || 'Imported Assembly', shapeKey: fileName, source: fileName, visible: true, translate: [0, 0, 0], rotate: [0, 0, 0], stepContext: productContexts[0]?.records || [], shape: rootShape });
     }
     return { fileName, parts: parts.map(({ shape, ...p }) => p), warnings, fallbackUsed: parts.length === 1 && parts[0].source === fileName };
   }
@@ -274,14 +291,45 @@ class CascadeStudioFileIO {
   }
 
   _extractSTEPProductNames(fileText) {
-    const names = [];
-    const re = /PRODUCT\s*\(\s*'((?:[^']|'')*)'/gi;
-    let match;
-    while ((match = re.exec(fileText))) {
+    return this._extractSTEPProductContexts(fileText).map(p => p.name);
+  }
+
+  _extractSTEPProductContexts(fileText) {
+    const contexts = [];
+    const records = this._splitSTEPRecords(fileText);
+    for (const record of records) {
+      const match = /PRODUCT\s*\(\s*'((?:[^']|'')*)'/i.exec(record.text);
+      if (!match) { continue; }
       const name = match[1].replace(/''/g, "'").trim();
-      if (name && !names.includes(name)) { names.push(name); }
+      if (!name || contexts.some(c => c.name === name)) { continue; }
+      const refs = new Set([record.id]);
+      const related = [record];
+      for (let depth = 0; depth < 3; depth++) {
+        let grew = false;
+        for (const candidate of records) {
+          if (related.includes(candidate)) { continue; }
+          const mentionsRef = [...refs].some(ref => ref && candidate.text.includes(ref));
+          if (!mentionsRef) { continue; }
+          related.push(candidate);
+          if (candidate.id && !refs.has(candidate.id)) { refs.add(candidate.id); grew = true; }
+        }
+        if (!grew) { break; }
+      }
+      contexts.push({ name, records: related.slice(0, 12).map(r => r.text) });
     }
-    return names;
+    return contexts;
+  }
+
+  _splitSTEPRecords(fileText) {
+    const records = [];
+    const re = /#[0-9]+\s*=.*?;/gs;
+    let match;
+    while ((match = re.exec(fileText || ''))) {
+      const text = match[0].replace(/\r\n/g, '\n').trim();
+      const id = /^#[0-9]+/.exec(text)?.[0];
+      records.push({ id, text });
+    }
+    return records;
   }
 
   _approximateShape(shape) {
@@ -359,10 +407,94 @@ class CascadeStudioFileIO {
     if (features.planes >= 2 && features.cylinders.length + features.cones.length + features.spheres.length > 0 && xyRound) {
       return { kind: 'revolve', radius: Math.max(dx, dy) / 2, height: dz, translate: c, confidence: 0.55, reason: 'axisymmetric analytic faces' };
     }
+    const sketch = this._planarSketchApprox(shape, bbox, features, eps);
+    if (sketch && features.faces >= 2) {
+      return { kind: 'sketchExtrude', sketch, height: sketch.height || dz, translate: sketch.translate || [0, 0, 0], confidence: 0.68, reason: 'planar face boundary' };
+    }
+    if (sketch) {
+      return { kind: 'sketchFace', sketch, translate: sketch.translate || [0, 0, 0], confidence: 0.7, reason: 'planar face boundary' };
+    }
     if (features.faces >= 4 && features.planes >= 2 && fill > 0.45) {
       return { kind: 'extrude', size: [dx, dy], height: dz, translate: c, confidence: 0.45, reason: 'planar prism bbox' };
     }
     return { kind: 'fallback', confidence: 0, reason: 'complex topology' };
+  }
+
+  _planarSketchApprox(shape, bbox, features, eps) {
+    const oc = self.oc;
+    const ST = oc.GeomAbs_SurfaceType || {};
+    const candidates = [];
+    self.ForEachFace(shape, (index, face) => {
+      try {
+        const surf = new oc.BRepAdaptor_Surface_2(face, true);
+        if (surf.GetType() !== ST.GeomAbs_Plane) { return; }
+        const normal = this._axisDir(surf.Plane ? surf.Plane() : null) || [0, 0, 1];
+        const plane = Math.abs(normal[2]) > 0.98 ? 'XY' : (Math.abs(normal[1]) > 0.98 ? 'XZ' : (Math.abs(normal[0]) > 0.98 ? 'YZ' : null));
+        if (!plane) { return; }
+        const edges = [];
+        self.ForEachEdge(face, (edgeIndex, edge) => {
+          const info = self.EdgeInfo ? self.EdgeInfo(edge) : null;
+          if (!info || info.length <= eps) { return; }
+          if (!['Line', 'Circle'].includes(info.type)) { return; }
+          edges.push(info);
+        });
+        if (edges.length < 3 || edges.length > 80) { return; }
+        const ordered = this._orderSketchEdges(edges, eps * 20);
+        if (!ordered || ordered.length < 3) { return; }
+        const coords = ordered.map(e => ({ type: e.type, start: this._projectPoint(e.startPoint, plane), mid: this._projectPoint(e.midpoint, plane), end: this._projectPoint(e.endPoint, plane) }));
+        const area = Math.abs(this._polygonArea(coords.map(e => e.start)));
+        if (area <= eps * eps) { return; }
+        const offset = plane === 'XY' ? ordered[0].startPoint[2] : (plane === 'XZ' ? ordered[0].startPoint[1] : ordered[0].startPoint[0]);
+        candidates.push({ plane, normal, coords, area, offset });
+      } catch (e) {}
+    });
+    if (!candidates.length) { return null; }
+    candidates.sort((a, b) => b.area - a.area);
+    const best = candidates[0];
+    const axisMin = best.plane === 'XY' ? bbox.min[2] : (best.plane === 'XZ' ? bbox.min[1] : bbox.min[0]);
+    const axisMax = best.plane === 'XY' ? bbox.max[2] : (best.plane === 'XZ' ? bbox.max[1] : bbox.max[0]);
+    const span = axisMax - axisMin;
+    const height = Math.abs(best.offset - axisMax) < Math.abs(best.offset - axisMin) ? -span : span;
+    const translate = best.plane === 'XY' ? [0, 0, best.offset] : (best.plane === 'XZ' ? [0, best.offset, 0] : [best.offset, 0, 0]);
+    return { plane: best.plane, edges: best.coords, height, translate };
+  }
+
+  _projectPoint(p, plane) {
+    if (plane === 'XZ') { return [p[0], p[2]]; }
+    if (plane === 'YZ') { return [p[1], p[2]]; }
+    return [p[0], p[1]];
+  }
+
+  _polygonArea(points) {
+    let a = 0;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i], q = points[(i + 1) % points.length];
+      a += p[0] * q[1] - q[0] * p[1];
+    }
+    return a / 2;
+  }
+
+  _orderSketchEdges(edges, tol) {
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    const remaining = edges.slice();
+    const ordered = [remaining.shift()];
+    while (remaining.length) {
+      const last = ordered[ordered.length - 1].endPoint;
+      let best = -1, flip = false, bestD = Infinity;
+      for (let i = 0; i < remaining.length; i++) {
+        const ds = dist(last, remaining[i].startPoint);
+        const de = dist(last, remaining[i].endPoint);
+        if (ds < bestD) { best = i; flip = false; bestD = ds; }
+        if (de < bestD) { best = i; flip = true; bestD = de; }
+      }
+      if (best < 0 || bestD > tol) { return null; }
+      const next = remaining.splice(best, 1)[0];
+      if (flip) {
+        const s = next.startPoint; next.startPoint = next.endPoint; next.endPoint = s;
+      }
+      ordered.push(next);
+    }
+    return dist(ordered[ordered.length - 1].endPoint, ordered[0].startPoint) <= tol ? ordered : null;
   }
 
   _shapeFeatures(shape) {
@@ -441,23 +573,77 @@ class CascadeStudioFileIO {
   }
 
   _meshBounds(shape) {
-    try {
-      const mesh = self.ShapeToMesh(shape, self.GUIState['MeshRes'] || 0.1, {}, {});
-      let min = [Infinity, Infinity, Infinity];
-      let max = [-Infinity, -Infinity, -Infinity];
-      for (let face of mesh[0] || []) {
-        const v = face.vertex_coord || [];
-        for (let i = 0; i < v.length; i += 3) {
-          min[0] = Math.min(min[0], v[i]); min[1] = Math.min(min[1], v[i + 1]); min[2] = Math.min(min[2], v[i + 2]);
-          max[0] = Math.max(max[0], v[i]); max[1] = Math.max(max[1], v[i + 1]); max[2] = Math.max(max[2], v[i + 2]);
-        }
-      }
-      if (!Number.isFinite(min[0])) { return null; }
-      return { min, max };
-    } catch (e) { return null; }
+    const points = this._meshPoints(shape);
+    if (!points.length) { return null; }
+    let min = [Infinity, Infinity, Infinity];
+    let max = [-Infinity, -Infinity, -Infinity];
+    for (const p of points) {
+      min[0] = Math.min(min[0], p[0]); min[1] = Math.min(min[1], p[1]); min[2] = Math.min(min[2], p[2]);
+      max[0] = Math.max(max[0], p[0]); max[1] = Math.max(max[1], p[1]); max[2] = Math.max(max[2], p[2]);
+    }
+    return { min, max };
   }
 
-  _generateSTEPImportCode(analysis) {
+  _meshPoints(shape, maxPoints = 2500) {
+    try {
+      const mesh = self.ShapeToMesh(shape, self.GUIState['MeshRes'] || 0.1, {}, {});
+      const raw = [];
+      for (let face of mesh[0] || []) {
+        const v = face.vertex_coord || [];
+        for (let i = 0; i < v.length; i += 3) { raw.push([v[i], v[i + 1], v[i + 2]]); }
+      }
+      if (raw.length <= maxPoints) { return raw; }
+      const step = raw.length / maxPoints;
+      const sampled = [];
+      for (let i = 0; i < maxPoints; i++) { sampled.push(raw[Math.floor(i * step)]); }
+      return sampled;
+    } catch (e) { return []; }
+  }
+
+  _shapeStats(shape) {
+    const features = this._shapeFeatures(shape);
+    let area = 0;
+    try {
+      const props = new self.oc.GProp_GProps_1();
+      self.oc.BRepGProp.SurfaceProperties_1(shape, props, false, false);
+      area = Math.abs(props.Mass());
+    } catch (e) {}
+    return { bounds: this._meshBounds(shape), volume: features.volume, surfaceArea: area, faces: features.faces, planes: features.planes, cylinders: features.cylinders.length, cones: features.cones.length, spheres: features.spheres.length };
+  }
+
+  _compareShapes(reference, candidate, options = {}) {
+    const tolerance = Number(options.tolerance ?? 0.25);
+    const ref = this._shapeStats(reference);
+    const cand = this._shapeStats(candidate);
+    const refPts = this._meshPoints(reference);
+    const candPts = this._meshPoints(candidate);
+    const rel = (a, b) => Math.abs(a - b) / Math.max(Math.abs(a), 1e-9);
+    const bboxDelta = ref.bounds && cand.bounds ? Math.max(...ref.bounds.min.map((v, i) => Math.abs(v - cand.bounds.min[i])), ...ref.bounds.max.map((v, i) => Math.abs(v - cand.bounds.max[i]))) : Infinity;
+    const nearest = (p, pts) => {
+      let best = Infinity;
+      for (const q of pts) {
+        const d = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+        if (d < best) { best = d; }
+      }
+      return best;
+    };
+    const directed = (a, b) => {
+      if (!a.length || !b.length) { return { max: Infinity, mean: Infinity }; }
+      let max = 0, sum = 0;
+      for (const p of a) { const d = nearest(p, b); max = Math.max(max, d); sum += d; }
+      return { max, mean: sum / a.length };
+    };
+    const a = directed(refPts, candPts);
+    const b = directed(candPts, refPts);
+    const hausdorff = Math.max(a.max, b.max);
+    const meanDistance = (a.mean + b.mean) / 2;
+    const volumeDelta = rel(ref.volume, cand.volume);
+    const areaDelta = rel(ref.surfaceArea, cand.surfaceArea);
+    const score = Math.max(0, 1 - Math.min(1, (bboxDelta / Math.max(tolerance, 1e-9) + volumeDelta * 4 + areaDelta * 2 + meanDistance / Math.max(tolerance, 1e-9)) / 8));
+    return { success: bboxDelta <= tolerance && volumeDelta <= 0.02 && areaDelta <= 0.05, tolerance, score, bboxDelta, volumeDelta, areaDelta, hausdorff, meanDistance, reference: ref, candidate: cand, sampleCounts: { reference: refPts.length, candidate: candPts.length } };
+  }
+
+  _generateSTEPImportCode(analysis, options = {}) {
     const safeFileName = JSON.stringify(analysis.fileName || 'model.step');
     const warnings = (analysis.warnings || []).map(w => '// Warning: ' + w).join('\n');
     const usedNames = new Set();
@@ -475,6 +661,15 @@ class CascadeStudioFileIO {
     };
     const fmt = (n) => Number.isFinite(n) ? Number(n.toPrecision(6)) : 0;
     const arr = (a) => '[' + (a || []).map(fmt).join(', ') + ']';
+    const stepCommentLines = (records) => {
+      const out = [];
+      for (const record of records || []) {
+        for (const line of String(record).split('\n')) {
+          out.push('// STEP: ' + line);
+        }
+      }
+      return out;
+    };
     const emitApprox = (part) => {
       const a = part.approximate || { kind: 'fallback' };
       if (a.kind === 'box') { return `Translate(${arr(a.translate)}, Box(${fmt(a.size[0])}, ${fmt(a.size[1])}, ${fmt(a.size[2])}, true))`; }
@@ -493,15 +688,58 @@ class CascadeStudioFileIO {
       if (a.kind === 'extrude') {
         return `(function(){ let f = new Sketch([${fmt(-a.size[0] / 2)}, ${fmt(-a.size[1] / 2)}]).LineTo([${fmt(a.size[0] / 2)}, ${fmt(-a.size[1] / 2)}]).LineTo([${fmt(a.size[0] / 2)}, ${fmt(a.size[1] / 2)}]).LineTo([${fmt(-a.size[0] / 2)}, ${fmt(a.size[1] / 2)}]).End(true).Face(); return Translate(${arr(a.translate)}, Extrude(f, [0, 0, ${fmt(a.height)}])); })()`;
       }
+      const emitSketch = (sk) => {
+        const edge0 = sk.edges?.[0];
+        if (!edge0) { return 'null'; }
+        let code = `new Sketch([${fmt(edge0.start[0])}, ${fmt(edge0.start[1])}]${sk.plane && sk.plane !== 'XY' ? `, ${JSON.stringify(sk.plane)}` : ''})`;
+        const closeDist = (p, q) => Math.hypot((p?.[0] || 0) - (q?.[0] || 0), (p?.[1] || 0) - (q?.[1] || 0));
+        const edges = sk.edges.slice();
+        if (edges.length && closeDist(edges[edges.length - 1].end, edge0.start) < 1e-7) { edges.pop(); }
+        for (const e of edges) {
+          if (e.type === 'Circle') { code += `.ArcTo([${fmt(e.mid[0])}, ${fmt(e.mid[1])}], [${fmt(e.end[0])}, ${fmt(e.end[1])}])`; }
+          else { code += `.LineTo([${fmt(e.end[0])}, ${fmt(e.end[1])}])`; }
+        }
+        return code + '.End(true).Face()';
+      };
+      if (a.kind === 'sketchFace') { return `(function(){ return Translate(${arr(a.translate)}, ${emitSketch(a.sketch)}); })()`; }
+      if (a.kind === 'sketchExtrude') {
+        const dir = a.sketch?.plane === 'XZ' ? `[0, ${fmt(a.height)}, 0]` : (a.sketch?.plane === 'YZ' ? `[${fmt(a.height)}, 0, 0]` : `[0, 0, ${fmt(a.height)}]`);
+        return `(function(){ let f = Translate(${arr(a.translate)}, ${emitSketch(a.sketch)}); return Extrude(f, ${dir}); })()`;
+      }
       if (a.kind === 'revolve') {
         return `(function(){ let p = new Sketch([0, ${fmt(-a.height / 2)}], "XZ").LineTo([${fmt(a.radius)}, ${fmt(-a.height / 2)}]).LineTo([${fmt(a.radius)}, ${fmt(a.height / 2)}]).LineTo([0, ${fmt(a.height / 2)}]).End(true).Face(); return Translate(${arr(a.translate)}, Revolve(p, 360)); })()`;
       }
       return `useStepPart(${JSON.stringify(part.source)}, ${JSON.stringify(part.label || part.id || 'part')})`;
     };
-    const lines = [
+    const exactByDefault = options?.exactByDefault === true;
+    const lines = exactByDefault ? [
+      '// Generated Exact STEP JS from imported STEP',
+      '// Renders the imported STEP assembly as a single OCCT shape to preserve assembly placements.',
+      '// Set exactByDefault: false or omit it when calling generateSTEPImportCode(...) to emit best-effort parametric approximations.'
+    ] : [
       '// Generated Approximate Parametric JS from imported STEP',
-      '// Reverse engineered best-effort primitives; complex parts fall back to useStepPart(...).'
+      '// Reverse engineered best-effort primitives; complex parts fall back to exact STEP sub-shapes in original OCCT locations.'
     ];
+    if (exactByDefault) {
+      if (warnings) { lines.push(warnings); }
+      lines.push('', 'const STEP_FILE = ' + safeFileName + ';', '');
+      lines.push('let importedAssembly = externalShapes[STEP_FILE];');
+      lines.push('if (!importedAssembly) {');
+      lines.push('  console.error("STEP file is not loaded: " + STEP_FILE + ". Import/attach it before running this script.");');
+      lines.push('} else {');
+      lines.push('  sceneShapes.push(importedAssembly);');
+      lines.push('  console.log("Loaded exact STEP assembly: " + STEP_FILE);');
+      lines.push('}');
+      lines.push('');
+      lines.push('// Parts detected for reference only; exact assembly render above keeps original STEP locations.');
+      for (let part of analysis.parts || []) {
+        const approx = part.approximate || {};
+        const confidence = Number.isFinite(approx.confidence) ? `, confidence ${fmt(approx.confidence)}` : '';
+        const reason = approx.reason ? `, ${approx.reason}` : '';
+        lines.push('// ' + (part.label || part.id || 'part') + ' — ' + (approx.kind || 'fallback') + confidence + reason + ' — source ' + (part.source || ''));
+      }
+      return lines.join('\n');
+    }
     if (warnings) { lines.push(warnings); }
     lines.push('', 'const STEP_FILE = ' + safeFileName + ';', '');
     lines.push('function useStepPart(source, label, translate = [0, 0, 0], rotate = [0, 0, 0]) {');
@@ -536,6 +774,11 @@ class CascadeStudioFileIO {
       const confidence = Number.isFinite(approx.confidence) ? `, confidence ${fmt(approx.confidence)}` : '';
       const reason = approx.reason ? `, ${approx.reason}` : '';
       lines.push('// ' + (part.label || part.id || name) + ' — ' + (approx.kind || 'fallback') + confidence + reason);
+      const stepLines = stepCommentLines(part.stepContext);
+      if (stepLines.length) {
+        lines.push('// Source STEP records copied verbatim:');
+        lines.push(...stepLines);
+      }
       lines.push('let ' + name + ' = ' + emitApprox(part) + ';');
       lines.push('');
     }

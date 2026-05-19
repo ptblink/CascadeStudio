@@ -278,6 +278,39 @@ test.describe('Booleans & Operations', () => {
 // ============================================================================
 
 test.describe('Export, GUI & Console', () => {
+  test('STEP round-trip exposes geometric closeness metrics', async ({ page }) => {
+    await gotoAndReady(page);
+
+    const fixtureName = 'roundtrip-box.step';
+    await evaluateNoErrors(page, 'Box(10, 20, 30, true);');
+    const stepText = await page.evaluate(() => window.CascadeAPI.getSTEP());
+    await page.evaluate(({ name, text }) => {
+      const file = new File([text], name, { type: 'model/step' });
+      window.CascadeAPI._app.engine.importFiles([file]);
+    }, { name: fixtureName, text: stepText });
+    await page.waitForFunction((name) => {
+      const logs = window.CascadeAPI.getConsoleLog();
+      return logs.some(l => l.includes('Generated CascadeStudio JS for ' + name));
+    }, fixtureName, { timeout: 60000 });
+    await evaluateNoErrors(page, 'Box(10, 20, 30, true);');
+
+    const code = await page.evaluate((name) => window.CascadeAPI.generateSTEPImportCode(name), fixtureName);
+    expect(code).toContain('Generated Approximate Parametric JS');
+
+    const compare = await page.evaluate((name) => window.CascadeAPI.compareCurrentShapeToSTEP(name, 0.25), fixtureName);
+
+    expect(compare.reference.volume).toBeGreaterThan(0);
+    expect(compare.candidate.volume).toBeGreaterThan(0);
+    expect(compare.sampleCounts.reference).toBeGreaterThan(0);
+    expect(compare.sampleCounts.candidate).toBeGreaterThan(0);
+    expect(compare).toHaveProperty('bboxDelta');
+    expect(compare).toHaveProperty('volumeDelta');
+    expect(compare).toHaveProperty('areaDelta');
+    expect(compare).toHaveProperty('hausdorff');
+    expect(compare).toHaveProperty('meanDistance');
+    expect(compare).toHaveProperty('score');
+  });
+
   test('export formats, GUI controls, and console capture all work', async ({ page }) => {
     await gotoAndReady(page);
 

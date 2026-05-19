@@ -168,7 +168,7 @@ fs.writeFileSync(path.join(distDir, 'index.html'), `<!DOCTYPE html>
                 <a href="#" title="Save Project to .json" onmouseup="window.saveProject();">Save Project</a>
                 <a href="#" title="Load Project from .json" onmouseup="window.loadProject();">Load Project</a>
                 <span class="topnav-separator"></span>
-                <a href="#" onmouseup="window.threejsViewport?.saveShapeSTEP();">Save STEP</a>
+                <a href="#" onclick="window.saveSTEP?.(); return false;">Save STEP</a>
                 <a href="#" onmouseup="window.threejsViewport?.saveShapeSTL();">Save STL</a>
                 <a href="#" onmouseup="window.threejsViewport?.saveShapeOBJ();">Save OBJ</a>
                 <span class="topnav-separator"></span>
