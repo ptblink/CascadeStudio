@@ -6,6 +6,7 @@ import { CascadeEnvironment } from './CascadeView.js';
 import { CascadeEngine, OpenSCADTranspiler } from 'cascade-core';
 import { EditorManager } from './EditorManager.js';
 import { ConsoleManager } from './ConsoleManager.js';
+import { ProvenanceManager } from './ProvenanceManager.js';
 import { GUIManager } from './GUIManager.js';
 import { OpenSCADMonaco } from './openscad/OpenSCADMonaco.js';
 import { CascadeAPI } from './CascadeAPI.js';
@@ -64,6 +65,7 @@ class CascadeStudioApp {
     this.engine = null;
     this.editor = null;
     this.console = null;
+    this.provenance = null;
     this.gui = null;
     this.viewport = null;
     this.api = null;
@@ -89,6 +91,7 @@ class CascadeStudioApp {
     // Create subsystem managers
     this.editor = new EditorManager(this);
     this.console = new ConsoleManager(this);
+    this.provenance = new ProvenanceManager(this);
     this.gui = new GUIManager(this);
 
     // Backward compatibility: expose functions to window for inline HTML event handlers
@@ -258,6 +261,16 @@ class CascadeStudioApp {
               case 'console':
                 this.console.initPanel(container);
                 break;
+              case 'provenance':
+                try {
+                  this.provenance.initPanel(container);
+                } catch (err) {
+                  element.textContent = `Provenance failed to load: ${err?.message || err}`;
+                  element.style.padding = '12px';
+                  element.style.color = '#f48771';
+                  console.error('Provenance failed to load', err);
+                }
+                break;
             }
           }
         };
@@ -288,8 +301,17 @@ class CascadeStudioApp {
         id: 'console',
         component: 'console',
         title: 'Console',
-        position: { referencePanel: 'codeEditor', direction: 'below' }
+        position: { referencePanel: 'codeEditor', direction: 'below', index: 1 }
       });
+
+      this._dockviewApi.addPanel({
+        id: 'provenance',
+        component: 'provenance',
+        title: 'Provenance',
+        position: { referencePanel: 'console', direction: 'within', index: 0 },
+        inactive: true
+      });
+      consolePanel.api.setActive();
 
       // Set proportions after dockview grid initializes
       setTimeout(() => {
@@ -320,8 +342,17 @@ class CascadeStudioApp {
         id: 'console',
         component: 'console',
         title: 'Console',
-        position: { referencePanel: 'cascadeView', direction: 'below' }
+        position: { referencePanel: 'cascadeView', direction: 'below', index: 1 }
       });
+
+      this._dockviewApi.addPanel({
+        id: 'provenance',
+        component: 'provenance',
+        title: 'Provenance',
+        position: { referencePanel: 'console', direction: 'within', index: 0 },
+        inactive: true
+      });
+      consolePanel.api.setActive();
 
       // Set initial proportions (editor ~50%, view+console ~50%, console 15% height)
       setTimeout(() => {

@@ -143,7 +143,10 @@ class CascadeStudioMesher {
           face_index: sourceFaceIndex,
           partIndex,
           part: partMetadata[partIndex] || null,
-          createdBy: partMetadata[partIndex]?.source || faceProvenance[faceHash] || null
+          createdBy: faceProvenance[faceHash] || partMetadata[partIndex]?.source || null,
+          subshapeId: `face_${faceHash}`,
+          faceSubshapeId: `face_${faceHash}`,
+          shapeId: partIndex != null ? `shape_${partIndex}` : null
         };
 
         let nbNodes = myT.get().NbNodes();
@@ -275,7 +278,10 @@ class CascadeStudioMesher {
             this_edge.edge_index = fullShapeEdgeHashes[edgeHash];
             Object.assign(this_edge, CascadeStudioMesher.edgeInfo(myEdge));
             this_edge.createdBy = edgeProvenance[edgeHash] || null;
+            this_edge.subshapeId = `edge_${edgeHash}`;
+            this_edge.edgeSubshapeId = `edge_${edgeHash}`;
             this_edge.partIndex = partEdgeHashes[edgeHash];
+            this_edge.shapeId = this_edge.partIndex != null ? `shape_${this_edge.partIndex}` : null;
             this_edge.part = partMetadata[this_edge.partIndex] || null;
             edgeList.push(this_edge);
           } else {
@@ -332,7 +338,10 @@ class CascadeStudioMesher {
           this_edge.edge_index = fullShapeEdgeHashes[edgeHash];
           Object.assign(this_edge, CascadeStudioMesher.edgeInfo(myEdge));
           this_edge.createdBy = edgeProvenance[edgeHash] || null;
+          this_edge.subshapeId = `edge_${edgeHash}`;
+          this_edge.edgeSubshapeId = `edge_${edgeHash}`;
           this_edge.partIndex = partEdgeHashes[edgeHash];
+          this_edge.shapeId = this_edge.partIndex != null ? `shape_${this_edge.partIndex}` : null;
           this_edge.part = partMetadata[this_edge.partIndex] || null;
           fullShapeEdgeHashes2[edgeHash] = edgeHash;
           edgeList.push(this_edge);

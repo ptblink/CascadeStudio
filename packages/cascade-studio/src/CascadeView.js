@@ -642,6 +642,20 @@ class CascadeEnvironment {
     return `  ${label.padEnd(12, " ")} ${value}`;
   }
 
+  _formatSelectionCodeHistory(lines, source) {
+    const history = Array.isArray(source?.history) ? source.history : [];
+    const block = history.length ? history : (Array.isArray(source?.codeBlock) ? source.codeBlock : []);
+    if (block.length) {
+      lines.push("", "Code");
+      for (const entry of block) {
+        const lineNumber = entry.codeLine ?? entry.lineNumber;
+        lines.push(`  ${String(lineNumber).padStart(4, " ")}: ${entry.code}`);
+      }
+    } else if (source?.code) {
+      lines.push("", "Code", `  ${source.code}`);
+    }
+  }
+
   _formatSelectedEdge(edgeIndex, info = {}) {
     const fmtNumber = (value) => Number.isFinite(value) ? Number(value.toFixed(4)).toString() : "unknown";
     const fmtPoint = (point) => Array.isArray(point) ? `[${point.map(fmtNumber).join(", ")}]` : "unknown";
@@ -672,7 +686,7 @@ class CascadeEnvironment {
       lines.push(this._formatSelectionField("Created by", createdBy.fnName || "unknown"));
       if (Number.isInteger(createdBy.historyStepIndex)) lines.push(this._formatSelectionField("Step", createdBy.historyStepIndex));
       if (Number.isInteger(createdBy.codeLine)) lines.push(this._formatSelectionField("Line", createdBy.codeLine));
-      if (createdBy.code) lines.push("", "Code", `  ${createdBy.code}`);
+      this._formatSelectionCodeHistory(lines, createdBy);
     }
 
     return lines.join("\n");
@@ -695,7 +709,7 @@ class CascadeEnvironment {
       lines.push(this._formatSelectionField("Created by", createdBy.fnName || "unknown"));
       if (Number.isInteger(createdBy.historyStepIndex)) lines.push(this._formatSelectionField("Step", createdBy.historyStepIndex));
       if (Number.isInteger(createdBy.codeLine)) lines.push(this._formatSelectionField("Line", createdBy.codeLine));
-      if (createdBy.code) lines.push("", "Code", `  ${createdBy.code}`);
+      this._formatSelectionCodeHistory(lines, createdBy);
     }
 
     return lines.join("\n");
@@ -714,13 +728,7 @@ class CascadeEnvironment {
     ];
     if (Number.isInteger(source.historyStepIndex)) lines.push(this._formatSelectionField("Step", source.historyStepIndex));
     if (Number.isInteger(source.codeLine)) lines.push(this._formatSelectionField("Line", source.codeLine));
-    const block = source.codeBlock || [];
-    if (block.length) {
-      lines.push("", "Code");
-      for (const entry of block) {
-        lines.push(`  ${String(entry.lineNumber).padStart(4, " ")}: ${entry.code}`);
-      }
-    }
+    this._formatSelectionCodeHistory(lines, source);
     return lines.join("\n");
   }
 

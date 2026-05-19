@@ -73,6 +73,8 @@ class CascadeAPI {
     return {
       workflow: [
         'result = await CascadeAPI.runCode(code) → {success, errors, logs, historySteps}',
+        'await CascadeAPI.getProvenanceGraph() → ops/shapes/subshapes/edges for last run',
+        'await CascadeAPI.traceSubshape("face_...") or explainSelection("edge_...") → creation chain to code',
         'CascadeAPI.setCameraAngle(azimuth, elevation) → 0=front, 90=right; 0=level, 90=top',
         'CascadeAPI.saveScreenshot("model.png") → then Read .playwright-mcp/model.png to view',
         'NEVER use browser_take_screenshot (captures full page UI) or browser_run_code (use setCameraAngle instead)',
@@ -186,6 +188,21 @@ Revolve(profile, 360);`,
   getHistorySteps() {
     const viewport = this._app.viewport;
     return viewport ? viewport._historySteps.slice() : [];
+  }
+
+  /** Return full provenance graph from last run: ops, shapes, subshapes, edges. */
+  getProvenanceGraph() {
+    return this._app.engine.getProvenanceGraph();
+  }
+
+  /** Trace one mesh/topology id, e.g. face_123456 or edge_123456. */
+  traceSubshape(subshapeId) {
+    return this._app.engine.traceSubshape(subshapeId);
+  }
+
+  /** Explain selected edge/face by subshape id. Selection UI can pass picked faceSubshapeId/edgeSubshapeId. */
+  explainSelection(subshapeId) {
+    return this.traceSubshape(subshapeId);
   }
 
   screenshot() {

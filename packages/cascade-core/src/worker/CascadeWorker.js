@@ -35,6 +35,8 @@ class CascadeStudioWorker {
     self.messageHandlers["Evaluate"] = this.evaluate.bind(this);
     self.messageHandlers["combineAndRenderShapes"] = this.combineAndRenderShapes.bind(this);
     self.messageHandlers["meshHistoryStep"] = this.meshHistoryStep.bind(this);
+    self.messageHandlers["getProvenanceGraph"] = this.getProvenanceGraph.bind(this);
+    self.messageHandlers["traceSubshape"] = this.traceSubshape.bind(this);
   }
 
   /** Override console.log/error to forward messages to the main thread. */
@@ -258,6 +260,7 @@ class CascadeStudioWorker {
       postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber++, "opType": "Triangulating Faces" } });
       let edgeProvenance = this._buildEdgeProvenanceMap(payload.code || '');
       let faceProvenance = this._buildFaceProvenanceMap(payload.code || '');
+      this._provenanceGraph = this._buildProvenanceGraph(payload.code || '', edgeProvenance, faceProvenance);
       let faceMetadataByOccurrence = this._faceMetadataByOccurrence || [];
       this._faceMetadataByOccurrence = [];
       let facesAndEdges = self.ShapeToMesh(self.currentShape,
@@ -274,13 +277,91 @@ class CascadeStudioWorker {
 
   _makeProvenanceRecord(step, stepIndex, source) {
     return {
+      opId: `op_${stepIndex}`,
       historyStepIndex: stepIndex,
       fnName: step.fnName,
       lineNumber: step.lineNumber,
       code: source.code,
       codeLine: source.codeLine,
-      codeContext: source.codeContext
+      codeContext: source.codeContext,
+      history: source.history || null,
+      confidence: 'inferred'
     };
+  }
+
+  _buildProvenanceGraph(code, edgeProvenance = {}, faceProvenance = {}) {
+    let lines = String(code || '').split(/\r?\n/);
+    let graph = { version: 1, ops: {}, shapes: {}, subshapes: {}, edges: [] };
+    let previous = new Set();
+    const transformOps = new Set(['Translate', 'Rotate', 'Mirror', 'Scale']);
+    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
+      let step = self.modelHistory[stepIndex];
+      let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
+      source.history = this._getVariableHistory(lines, source.codeLine);
+      let opId = `op_${stepIndex}`;
+      graph.ops[opId] = {
+        opId,
+        fnName: step.fnName,
+        lineNumber: step.lineNumber,
+        codeLine: source.codeLine,
+        code: source.code,
+        codeContext: source.codeContext,
+        shapeCount: step.shapeCount
+      };
+      let current = new Set();
+      for (let shapeIndex = 0; shapeIndex < (step.shapes || []).length; shapeIndex++) {
+        let shape = step.shapes[shapeIndex];
+        if (!shape || !shape.IsNull || shape.IsNull()) continue;
+        let shapeId = `shape_${stepIndex}_${shapeIndex}`;
+        graph.shapes[shapeId] = { shapeId, opId, historyStepIndex: stepIndex, shapeIndex, shapeType: shape.ShapeType?.().value };
+        self.ForEachFace(shape, (faceIndex, face) => {
+          let hash = self.oc.OCJS.HashCode(face, 100000000);
+          let id = `face_${hash}`;
+          current.add(id);
+          let record = faceProvenance[hash] || this._makeProvenanceRecord(step, stepIndex, source);
+          graph.subshapes[id] ||= { subshapeId: id, type: 'FACE', hash, shapeId, index: faceIndex, createdBy: record };
+          graph.edges.push({ from: previous.has(id) ? id : null, to: id, relation: previous.has(id) ? (transformOps.has(step.fnName) ? 'copied' : 'modified') : 'created', opId, confidence: previous.has(id) ? 'matched' : 'inferred' });
+        });
+        self.ForEachEdge(shape, (edgeIndex, edge) => {
+          let hash = self.oc.OCJS.HashCode(edge, 100000000);
+          let id = `edge_${hash}`;
+          current.add(id);
+          let record = edgeProvenance[hash] || this._makeProvenanceRecord(step, stepIndex, source);
+          let info = null;
+          try { info = self.EdgeInfo(edge); } catch (e) {}
+          graph.subshapes[id] ||= { subshapeId: id, type: 'EDGE', hash, shapeId, index: edgeIndex, createdBy: record, metrics: info };
+          graph.edges.push({ from: previous.has(id) ? id : null, to: id, relation: previous.has(id) ? (transformOps.has(step.fnName) ? 'copied' : 'modified') : 'created', opId, confidence: previous.has(id) ? 'matched' : 'inferred' });
+        });
+      }
+      previous = current;
+    }
+    return graph;
+  }
+
+  getProvenanceGraph() { return this._provenanceGraph || { version: 1, ops: {}, shapes: {}, subshapes: {}, edges: [] }; }
+
+  traceSubshape(payload) {
+    let subshapeId = typeof payload === 'string' ? payload : payload?.subshapeId;
+    let graph = this.getProvenanceGraph();
+    if (!subshapeId || !graph.subshapes[subshapeId]) return null;
+    let chain = [];
+    let seen = new Set();
+    let cur = subshapeId;
+    let reverseEdges = [...graph.edges].reverse();
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      let matches = reverseEdges.filter(e => e.to === cur);
+      if (!matches.length) break;
+      for (let edge of matches) {
+        let op = graph.ops[edge.opId] || null;
+        chain.push({ subshapeId: cur, from: edge.from, relation: edge.relation, confidence: edge.confidence, opId: edge.opId, fnName: op?.fnName, lineNumber: op?.lineNumber, codeLine: op?.codeLine, code: op?.code });
+      }
+      let next = matches.find(e => e.from && e.from !== cur);
+      cur = next?.from || null;
+    }
+    let first = chain[0];
+    let last = chain[chain.length - 1];
+    return { selected: graph.subshapes[subshapeId], summary: first ? `${graph.subshapes[subshapeId].type} ${first.relation} by ${first.fnName} at line ${first.codeLine || first.lineNumber}; origin ${last?.fnName || 'unknown'} at line ${last?.codeLine || last?.lineNumber || 'unknown'}.` : '', chain };
   }
 
   _buildEdgeProvenanceMap(code) {
@@ -302,6 +383,7 @@ class CascadeStudioWorker {
     for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
       let step = self.modelHistory[stepIndex];
       let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
+      source.history = this._getVariableHistory(lines, source.codeLine);
       let isTransform = transformOps.has(step.fnName);
       for (let shape of step.shapes || []) {
         if (!shape || !shape.IsNull || shape.IsNull()) continue;
@@ -327,6 +409,7 @@ class CascadeStudioWorker {
     for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
       let step = self.modelHistory[stepIndex];
       let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
+      source.history = this._getVariableHistory(lines, source.codeLine);
       let record = this._makeProvenanceRecord(step, stepIndex, source);
       let currentFaceHashes = {};
       for (let shape of step.shapes || []) {
@@ -363,7 +446,36 @@ class CascadeStudioWorker {
       ? this._getSourceReference(lines, bestStep.lineNumber, bestStep.fnName)
       : { codeLine: null, code: '', codeContext: [] };
     let block = this._getSourceBlock(lines, source.codeLine);
-    return Object.assign({ historyStepIndex: bestStepIndex, fnName: bestStep?.fnName || 'unknown' }, source, { codeBlock: block });
+    let result = Object.assign({ historyStepIndex: bestStepIndex, fnName: bestStep?.fnName || 'unknown' }, source, { codeBlock: block });
+    result.history = this._getVariableHistory(lines, result.codeLine);
+    return result;
+  }
+
+  _getAssignedVariable(code) {
+    let match = String(code || '').match(/^\s*(?:(?:let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=/);
+    return match ? match[1] : null;
+  }
+
+  _getVariableHistory(lines, lineNumber) {
+    let variable = this._getAssignedVariable(lines[(lineNumber || 0) - 1]);
+    if (!variable) return [];
+    let records = [];
+    let seen = new Set();
+    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
+      let step = self.modelHistory[stepIndex];
+      let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
+      if (this._getAssignedVariable(source.code) !== variable) continue;
+      if (seen.has(source.codeLine)) continue;
+      seen.add(source.codeLine);
+      records.push({
+        historyStepIndex: stepIndex,
+        fnName: step.fnName,
+        lineNumber: step.lineNumber,
+        codeLine: source.codeLine,
+        code: source.code
+      });
+    }
+    return records;
   }
 
   _getSourceBlock(lines, lineNumber) {

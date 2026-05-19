@@ -99,6 +99,16 @@ class CascadeEngine {
     });
   }
 
+  /** Return compact shape/subshape provenance graph for last evaluation. */
+  async getProvenanceGraph() {
+    return this._messageBus.request('getProvenanceGraph', {});
+  }
+
+  /** Trace selected face_*/
+  async traceSubshape(subshapeId) {
+    return this._messageBus.request('traceSubshape', { subshapeId });
+  }
+
   /** Export the current shape as STEP text. */
   async exportSTEP() {
     return this._messageBus.request('saveShapeSTEP');

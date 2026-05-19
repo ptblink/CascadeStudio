@@ -186,6 +186,7 @@ class EditorManager {
 
     if (!newCode.trim()) {
       if (!preserveConsole) { this._app.console.showWelcome(true); }
+      this._app.provenance?.clear();
       this._codeContainer.setState({ code: newCode });
       return;
     }
@@ -211,6 +212,7 @@ class EditorManager {
       if (this._app.viewport && result.meshData) {
         this._app.viewport.renderMeshData(result.meshData, result.sceneOptions);
       }
+      this._app.provenance?.refresh();
     }).catch((err) => {
       console.error("Evaluation error: " + err.message);
     }).finally(() => {

@@ -6,6 +6,9 @@ const path = require('path');
 const EVERYTHING_EXAMPLE = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'everything-example.js'), 'utf-8'
 );
+const CONTAINER_EXAMPLE = fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'container-example.js'), 'utf-8'
+);
 
 /**
  * Wait for the CascadeAPI to become available and ready.
@@ -331,6 +334,21 @@ test.describe('Everything Example', () => {
     await evaluateCode(page, EVERYTHING_EXAMPLE, 120000);
     const errors = await page.evaluate(() => window.CascadeAPI.getErrors());
     expect(errors).toEqual([]);
+  });
+
+  test('container fixture does not emit provenance edge endpoint warnings', async ({ page }) => {
+    const warnings = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'warning') { warnings.push(msg.text()); }
+    });
+
+    await page.goto('/');
+    await waitForReady(page);
+    await page.waitForFunction(() => !window.CascadeAPI.isWorking(), { timeout: 60000 });
+    await evaluateCode(page, CONTAINER_EXAMPLE, 120000);
+    const errors = await page.evaluate(() => window.CascadeAPI.getErrors());
+    expect(errors).toEqual([]);
+    expect(warnings.filter((warning) => warning.includes('has invalid endpoints'))).toEqual([]);
   });
 });
 
