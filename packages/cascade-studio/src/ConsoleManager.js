@@ -254,12 +254,12 @@ class ConsoleManager {
 
     const spinnerFrames = ['|', '/', '-', '\\'];
     const spinnerIndex = Number.isFinite(options.spinner) ? options.spinner : Math.floor(Date.now() / 125);
-    const spinner = options.done || normalized === 100 ? '✓' : spinnerFrames[spinnerIndex % spinnerFrames.length];
+    const spinner = options.done ? '✓' : spinnerFrames[spinnerIndex % spinnerFrames.length];
     let pct = normalized === null ? ' --%' : String(Math.round(normalized)).padStart(3, ' ') + '%';
     let text = `${label} [${bar}] ${pct} ${spinner}` + (detail ? `  ${detail}` : '');
 
-    const level = options.level || ((options.done || normalized === 100) ? "success" : "progress");
-    this._writeProgressLine(id, level, text, options.done || normalized === 100);
+    const level = options.level || (options.done ? "success" : "progress");
+    this._writeProgressLine(id, level, text, !!options.done);
   }
 
   /** Override browser console methods and mirror them into xterm.js. */
