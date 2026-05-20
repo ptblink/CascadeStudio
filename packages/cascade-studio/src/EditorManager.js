@@ -192,7 +192,7 @@ class EditorManager {
     }
 
     window.workerWorking = true;
-    this._app.console.startSpinner('model', 'Generating Model', 'starting');
+    this._app.console.startSpinner('model', 'Generating Model', 'starting', { percent: 0 });
 
     // Transpile OpenSCAD if needed
     let codeToEval = newCode;

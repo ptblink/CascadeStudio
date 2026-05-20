@@ -209,13 +209,15 @@ class ConsoleManager {
     tick();
   }
 
-  /** Update latest spinner text; next timer tick paints it. */
+  /** Update latest spinner text and repaint immediately. */
   updateSpinner(id, updates = {}) {
     const state = this._spinners.get(id);
     if (!state) return;
     if (updates.label !== undefined) state.label = updates.label;
     if (updates.detail !== undefined) state.detail = updates.detail;
     if (updates.percent !== undefined) state.percent = updates.percent;
+    state.spinner++;
+    this.updateProgress(id, state.label, state.detail, state.percent, { spinner: state.spinner });
   }
 
   /** Stop a TUI-style spinner and finish the active line. */
