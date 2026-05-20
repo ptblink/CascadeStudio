@@ -17,6 +17,7 @@ class CascadeStudioWorker {
     self.fullShapeFaceHashes = {};
     self.currentShape = null;
     self.messageHandlers = self.messageHandlers || {};
+    self.CascadeStudioWorkerCollectTransferables = CascadeStudioWorker.collectTransferables;
 
     // Store original console methods
     this.realConsoleLog = console.log;
@@ -37,6 +38,31 @@ class CascadeStudioWorker {
     self.messageHandlers["meshHistoryStep"] = this.meshHistoryStep.bind(this);
     self.messageHandlers["getProvenanceGraph"] = this.getProvenanceGraph.bind(this);
     self.messageHandlers["traceSubshape"] = this.traceSubshape.bind(this);
+  }
+
+  static collectTransferables(value, transferList = [], seen = new Set(), seenBuffers = new Set()) {
+    if (!value || typeof value !== 'object' || seen.has(value)) return transferList;
+    seen.add(value);
+    if (ArrayBuffer.isView(value)) {
+      if (value.buffer && value.buffer.byteLength > 0 && !seenBuffers.has(value.buffer)) {
+        seenBuffers.add(value.buffer);
+        transferList.push(value.buffer);
+      }
+      return transferList;
+    }
+    if (value instanceof ArrayBuffer) {
+      if (value.byteLength > 0 && !seenBuffers.has(value)) {
+        seenBuffers.add(value);
+        transferList.push(value);
+      }
+      return transferList;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) CascadeStudioWorker.collectTransferables(item, transferList, seen, seenBuffers);
+      return transferList;
+    }
+    for (const key of Object.keys(value)) CascadeStudioWorker.collectTransferables(value[key], transferList, seen, seenBuffers);
+    return transferList;
   }
 
   /** Override console.log/error to forward messages to the main thread. */
@@ -67,26 +93,37 @@ class CascadeStudioWorker {
   /** Asynchronously load all dependencies and initialize OpenCascade WASM. */
   async init() {
     let initOpenCascade, opentype, potpack;
+    const reportStartup = (detail, percent, done = false) => {
+      postMessage({ type: "startupProgress", payload: { label: "Loading CAD Kernel", detail, percent, done } });
+    };
+
+    reportStartup("starting worker", 2);
 
     try {
+      reportStartup("loading OpenCascade JavaScript", 8);
       const ocMod = await import('opencascade.js/dist/cascadestudio.js');
       initOpenCascade = ocMod.default;
+      reportStartup("OpenCascade JavaScript loaded", 22);
     } catch(e) {
       postMessage({ type: "log", payload: "ERROR loading opencascade: " + e.message });
       throw e;
     }
 
     try {
+      reportStartup("loading font parser", 26);
       const otMod = await import('opentype.js/dist/opentype.module.js');
       opentype = otMod.default;
+      reportStartup("font parser loaded", 34);
     } catch(e) {
       postMessage({ type: "log", payload: "ERROR loading opentype: " + e.message });
       throw e;
     }
 
     try {
+      reportStartup("loading text layout helper", 38);
       const ppMod = await import('potpack');
       potpack = ppMod.default || ppMod.potpack || ppMod;
+      reportStartup("text layout helper loaded", 45);
     } catch(e) {
       postMessage({ type: "log", payload: "ERROR loading potpack: " + e.message });
       throw e;
@@ -95,15 +132,20 @@ class CascadeStudioWorker {
     self.potpack = potpack;
 
     // Instantiate class-based modules (populates self.* for eval() access)
+    reportStartup("initializing CAD helpers", 50);
     this.standardLibrary = new CascadeStudioStandardLibrary();
     this.mesher = new CascadeStudioMesher();
     this.fileIO = new CascadeStudioFileIO();
+    reportStartup("CAD helpers ready", 58);
 
     // Preload fonts available via Text3D
+    reportStartup("preloading Text3D fonts", 62);
     this._loadFonts(opentype);
+    reportStartup("Text3D font preload started", 68);
 
     // Load the OpenCascade WebAssembly Module (v2 Embind)
     try {
+      reportStartup("loading OpenCascade WASM", 72);
       const openCascade = await initOpenCascade({
         locateFile(path) {
           if (path.endsWith('.wasm')) {
@@ -114,8 +156,11 @@ class CascadeStudioWorker {
         }
       });
 
+      reportStartup("OpenCascade WASM initialized", 92);
+
       // Register the "OpenCascade" WebAssembly Module under the shorthand "oc"
       self.oc = openCascade;
+      reportStartup("registering worker handlers", 96);
 
       // Route incoming messages to registered handlers
       onmessage = function (e) {
@@ -123,11 +168,14 @@ class CascadeStudioWorker {
         if (response !== undefined || e.data.requestId) {
           const msg = { "type": e.data.type, payload: response };
           if (e.data.requestId) { msg.requestId = e.data.requestId; }
-          postMessage(msg);
+          const transferList = CascadeStudioWorker.collectTransferables(response);
+          if (transferList.length > 0) postMessage(msg, transferList);
+          else postMessage(msg);
         }
       };
 
       // Signal that the worker is ready
+      reportStartup("ready", 100, true);
       postMessage({ type: "startupCallback" });
     } catch(e) {
       postMessage({ type: "log", payload: "ERROR loading OpenCascade WASM: " + e.message });

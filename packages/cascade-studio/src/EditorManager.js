@@ -171,9 +171,9 @@ class EditorManager {
   evaluateCode(saveToURL = false, { preserveConsole = false } = {}) {
     if (window.workerWorking) {
       this._pendingEvaluate = true;
-      return;
+      return Promise.resolve(false);
     }
-    if (!this._app.engine || !this._app.engine.isReady) { return; }
+    if (!this._app.engine || !this._app.engine.isReady) { return Promise.resolve(false); }
 
     monaco.languages.typescript.typescriptDefaults.setExtraLibs(this._extraLibs);
     let newCode = this.editor.getValue();
@@ -186,12 +186,13 @@ class EditorManager {
 
     if (!newCode.trim()) {
       if (!preserveConsole) { this._app.console.showWelcome(true); }
-      this._app.provenance?.clear();
+      this._app.graph?.clear();
       this._codeContainer.setState({ code: newCode });
-      return;
+      return Promise.resolve(false);
     }
 
     window.workerWorking = true;
+    this._app.console.startSpinner('model', 'Generating Model', 'starting');
 
     // Transpile OpenSCAD if needed
     let codeToEval = newCode;
@@ -201,22 +202,27 @@ class EditorManager {
       } catch (e) {
         console.error("OpenSCAD transpile error: " + e.message);
         window.workerWorking = false;
-        return;
+        this._app.console.stopSpinner('model', { detail: 'failed', level: 'error' });
+        return Promise.resolve(false);
       }
     }
 
     // Use CascadeEngine to evaluate and get mesh data
-    this._app.engine.evaluate(codeToEval, {
+    const evaluationPromise = this._app.engine.evaluate(codeToEval, {
       guiState: this._app.gui.state,
-    }).then((result) => {
+    }).then(async (result) => {
       if (this._app.viewport && result.meshData) {
-        this._app.viewport.renderMeshData(result.meshData, result.sceneOptions);
+        await this._app.viewport.renderMeshData(result.meshData, result.sceneOptions);
       }
-      this._app.provenance?.refresh();
+      this._app.graph?.refresh();
+      return true;
     }).catch((err) => {
       console.error("Evaluation error: " + err.message);
+      this._app.console.stopSpinner('model', { detail: 'failed', level: 'error' });
+      return false;
     }).finally(() => {
       window.workerWorking = false;
+      this._app.console.stopSpinner('model', { detail: 'done' });
       if (this._pendingEvaluate) {
         this.scheduleEvaluate(saveToURL, 0);
       }
@@ -236,7 +242,8 @@ class EditorManager {
       );
     }
 
-    console.log("Generating Model");
+    // Spinner owns the live "Generating Model" console line.
+    return evaluationPromise;
   }
 
   /** Set editor mode: 'cascadestudio' or 'openscad'. */

@@ -1,8 +1,8 @@
-// ProvenanceManager.js - live provenance graph viewer
+// GraphManager.js - live graph viewer
 
 import cytoscape from 'cytoscape';
 
-class ProvenanceManager {
+class GraphManager {
   constructor(app) {
     this._app = app;
     this._container = null;
@@ -27,7 +27,7 @@ class ProvenanceManager {
     container.element.style.fontFamily = 'Menlo, Monaco, Consolas, "Liberation Mono", monospace';
 
     this._container = document.createElement('div');
-    this._container.className = 'cs-provenance';
+    this._container.className = 'cs-graph';
     this._container.style.position = 'absolute';
     this._container.style.inset = '0';
     this._container.style.display = 'flex';
@@ -46,7 +46,7 @@ class ProvenanceManager {
     this._container.appendChild(toolbar);
 
     this._status = document.createElement('span');
-    this._status.textContent = 'Provenance graph: waiting for model';
+    this._status.textContent = 'Graph: waiting for model';
     this._status.style.fontSize = '12px';
     this._status.style.color = '#cccccc';
     toolbar.appendChild(this._status);
@@ -111,7 +111,7 @@ class ProvenanceManager {
     if (!this._graphEl) { return false; }
     const rect = this._graphEl.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
-      if (this._status) { this._status.textContent = 'Provenance graph: waiting for panel layout'; }
+      if (this._status) { this._status.textContent = 'Graph: waiting for panel layout'; }
       this._scheduleRefresh(100);
       return false;
     }
@@ -137,9 +137,9 @@ class ProvenanceManager {
       });
     } catch (err) {
       this._cy = null;
-      if (this._status) { this._status.textContent = 'Provenance graph: renderer unavailable'; }
+      if (this._status) { this._status.textContent = 'Graph: renderer unavailable'; }
       if (this._details) { this._details.textContent = err?.message || String(err); }
-      console.warn('Provenance renderer failed to initialize', err);
+      console.warn('Graph renderer failed to initialize', err);
       return false;
     }
     this._cy.on('tap', 'node, edge', (event) => {
@@ -163,7 +163,7 @@ class ProvenanceManager {
     if (!this._graphEl || !this._app.engine?.getProvenanceGraph) { return; }
     if (!this._cy && !this._initGraph()) { return; }
     const token = ++this._updateToken;
-    this._status.textContent = 'Provenance graph: loading...';
+    this._status.textContent = 'Graph: loading...';
     try {
       const graph = await this._app.engine.getProvenanceGraph();
       if (token !== this._updateToken) { return; }
@@ -175,7 +175,7 @@ class ProvenanceManager {
       }
     } catch (err) {
       if (token !== this._updateToken) { return; }
-      this._status.textContent = 'Provenance graph: error';
+      this._status.textContent = 'Graph: error';
       this._details.textContent = err?.message || String(err);
     }
   }
@@ -184,7 +184,7 @@ class ProvenanceManager {
     this._lastGraph = null;
     this._focusSubshapeId = null;
     this._focusLabel = null;
-    if (this._status) { this._status.textContent = 'Provenance graph: waiting for model'; }
+    if (this._status) { this._status.textContent = 'Graph: waiting for model'; }
     if (this._details) { this._details.textContent = 'Run code to populate graph.'; }
     this._cy?.elements().remove();
   }
@@ -211,7 +211,7 @@ class ProvenanceManager {
       const focused = this._filterGraphForTrace(this._lastGraph, trace, subshapeId);
       this._render(focused, { label, trace, sourceGraph: this._lastGraph });
     } catch (err) {
-      if (this._status) { this._status.textContent = 'Provenance graph: trace error'; }
+      if (this._status) { this._status.textContent = 'Graph: trace error'; }
       if (this._details) { this._details.textContent = err?.message || String(err); }
     }
   }
@@ -264,7 +264,7 @@ class ProvenanceManager {
     const shapes = graph.shapes ? Object.keys(graph.shapes).length : 0;
     const subshapes = graph.subshapes ? Object.keys(graph.subshapes).length : 0;
     const edges = Array.isArray(graph.edges) ? graph.edges.length : 0;
-    const prefix = focus ? `Provenance graph: ${focus.label} trace` : 'Provenance graph';
+    const prefix = focus ? `Graph: ${focus.label} trace` : 'Graph';
     this._status.textContent = `${prefix}: ${ops} ops, ${shapes} shapes, ${subshapes} subshapes, ${edges} links`;
     this._details.textContent = focus ? this._traceSummaryText(focus.trace, graph) : this._summaryText(graph);
 
@@ -466,7 +466,7 @@ class ProvenanceManager {
   }
 
   _traceSummaryText(trace, graph) {
-    if (!trace) { return 'No provenance trace for selection.'; }
+    if (!trace) { return 'No graph trace for selection.'; }
     return JSON.stringify({
       selected: trace.selected?.subshapeId || null,
       type: trace.selected?.type || null,
@@ -491,9 +491,9 @@ class ProvenanceManager {
       shapes: Object.keys(graph.shapes || {}).length,
       subshapes: Object.keys(graph.subshapes || {}).length,
       edges: Array.isArray(graph.edges) ? graph.edges.length : 0,
-      hint: 'Click nodes/edges for raw provenance data. Drag to pan, scroll to zoom.'
+      hint: 'Click nodes/edges for raw graph data. Drag to pan, scroll to zoom.'
     }, null, 2);
   }
 }
 
-export { ProvenanceManager };
+export { GraphManager };

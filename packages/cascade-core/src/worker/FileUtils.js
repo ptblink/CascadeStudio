@@ -104,7 +104,9 @@ class CascadeStudioFileIO {
         postMessage({ type: "importProgress", payload: { label: "Importing files", detail: "rendering imported shapes", percent: 96 } });
         const shapeCount = self.sceneShapes.length;
         let response = self.messageHandlers["combineAndRenderShapes"]({ maxDeviation: self.GUIState['MeshRes'] || 0.1 });
-        postMessage({ "type": "combineAndRenderShapes", payload: response });
+        const transferList = self.CascadeStudioWorkerCollectTransferables ? self.CascadeStudioWorkerCollectTransferables(response) : [];
+        if (transferList.length > 0) postMessage({ "type": "combineAndRenderShapes", payload: response }, transferList);
+        else postMessage({ "type": "combineAndRenderShapes", payload: response });
         postMessage({ type: "importProgress", payload: { label: "Import complete", detail: shapeCount + " shape(s)", percent: 100, done: true } });
       }
     })().catch((error) => {
@@ -711,18 +713,22 @@ class CascadeStudioFileIO {
       }
       return `useStepPart(${JSON.stringify(part.source)}, ${JSON.stringify(part.label || part.id || 'part')})`;
     };
-    const exactByDefault = options?.exactByDefault === true;
-    const lines = exactByDefault ? [
+    const approximate = options?.approximate === true || options?.exactByDefault === false;
+    const singleAssembly = options?.singleAssembly === true || options?.exactByDefault === true;
+    const lines = singleAssembly ? [
       '// Generated Exact STEP JS from imported STEP',
-      '// Renders the imported STEP assembly as a single OCCT shape to preserve assembly placements.',
-      '// Set exactByDefault: false or omit it when calling generateSTEPImportCode(...) to emit best-effort parametric approximations.'
-    ] : [
+      '// Renders the imported STEP assembly as one OCCT shape.'
+    ] : approximate ? [
       '// Generated Approximate Parametric JS from imported STEP',
       '// Reverse engineered best-effort primitives; complex parts fall back to exact STEP sub-shapes in original OCCT locations.'
+    ] : [
+      '// Generated Exact STEP Parts JS from imported STEP',
+      '// Declares each detected STEP part as its own JS variable.',
+      '// Each variable references the exact imported OCCT sub-shape; no parametric reverse engineering.'
     ];
-    if (exactByDefault) {
-      if (warnings) { lines.push(warnings); }
-      lines.push('', 'const STEP_FILE = ' + safeFileName + ';', '');
+    if (warnings) { lines.push(warnings); }
+    lines.push('', 'const STEP_FILE = ' + safeFileName + ';', '');
+    if (singleAssembly) {
       lines.push('let importedAssembly = externalShapes[STEP_FILE];');
       lines.push('if (!importedAssembly) {');
       lines.push('  console.error("STEP file is not loaded: " + STEP_FILE + ". Import/attach it before running this script.");');
@@ -730,18 +736,8 @@ class CascadeStudioFileIO {
       lines.push('  sceneShapes.push(importedAssembly);');
       lines.push('  console.log("Loaded exact STEP assembly: " + STEP_FILE);');
       lines.push('}');
-      lines.push('');
-      lines.push('// Parts detected for reference only; exact assembly render above keeps original STEP locations.');
-      for (let part of analysis.parts || []) {
-        const approx = part.approximate || {};
-        const confidence = Number.isFinite(approx.confidence) ? `, confidence ${fmt(approx.confidence)}` : '';
-        const reason = approx.reason ? `, ${approx.reason}` : '';
-        lines.push('// ' + (part.label || part.id || 'part') + ' — ' + (approx.kind || 'fallback') + confidence + reason + ' — source ' + (part.source || ''));
-      }
       return lines.join('\n');
     }
-    if (warnings) { lines.push(warnings); }
-    lines.push('', 'const STEP_FILE = ' + safeFileName + ';', '');
     lines.push('function useStepPart(source, label, translate = [0, 0, 0], rotate = [0, 0, 0]) {');
     lines.push('  let shape = externalShapes[source];');
     lines.push('  if (!shape) {');
@@ -757,12 +753,12 @@ class CascadeStudioFileIO {
     lines.push('  return shape;');
     lines.push('}', '');
     const partNames = [];
-    const groupCounts = this._approxGroups(analysis.parts || []);
+    const groupCounts = approximate ? this._approxGroups(analysis.parts || []) : [];
     if (groupCounts.length) {
       lines.push('// Repeated solids detected: ' + groupCounts.map(g => g.count + 'x ' + g.signature).join('; '));
       lines.push('');
     }
-    const hasGlass = (analysis.parts || []).some(p => this._looksLikeGlass(p));
+    const hasGlass = approximate && (analysis.parts || []).some(p => this._looksLikeGlass(p));
     if (hasGlass) {
       lines.push('// Material hint: transparent/glass-like parts detected. If renderer supports per-shape material, set opacity ~0.25, color light blue.');
       lines.push('');
@@ -779,7 +775,7 @@ class CascadeStudioFileIO {
         lines.push('// Source STEP records copied verbatim:');
         lines.push(...stepLines);
       }
-      lines.push('let ' + name + ' = ' + emitApprox(part) + ';');
+      lines.push('let ' + name + ' = ' + (approximate ? emitApprox(part) : `useStepPart(${JSON.stringify(part.source)}, ${JSON.stringify(part.label || part.id || name)})`) + ';');
       lines.push('');
     }
     lines.push('// Generated parts: ' + partNames.join(', '));

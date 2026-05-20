@@ -178,10 +178,10 @@ class CascadeEnvironment {
 
   /** Render mesh data received from the engine.
    *  Replaces the old _registerRenderCallback / "combineAndRenderShapes" handler. */
-  renderMeshData(meshData, sceneOptions) {
+  async renderMeshData(meshData, sceneOptions) {
     if (!meshData) return;
     const { faces: facelist, edges: edgelist } = meshData;
-    window.workerWorking = false;
+    await this._yieldToMainThread();
     if (!facelist) { return; }
     if (!sceneOptions) { sceneOptions = {}; }
     this._lastSceneOptions = sceneOptions;
@@ -216,7 +216,7 @@ class CascadeEnvironment {
       this.environment.scene.add(this.grid);
     }
 
-    this.mainObject = this._buildObjectFromMesh(facelist, edgelist);
+    this.mainObject = await this._buildObjectFromMesh(facelist, edgelist);
 
     // Expand fog distance to enclose the current object
     this.boundingBox = new THREE.Box3().setFromObject(this.mainObject);
@@ -311,34 +311,45 @@ class CascadeEnvironment {
   }
 
   /** Build a THREE.Group from facelist/edgelist mesh data. */
-  _buildObjectFromMesh(facelist, edgelist) {
+  async _buildObjectFromMesh(facelist, edgelist) {
     let group = new THREE.Group();
     group.name = "shape";
     group.rotation.x = -Math.PI / 2;
 
     // Add Triangulated Faces to Object
-    let vertices = [], normals = [], triangles = [], uvs = [], colors = [];
-    let vInd = 0; let globalFaceIndex = 0;
+    let vertexCount = 0, indexCount = 0, uvCount = 0;
+    for (const face of facelist) {
+      vertexCount += face.vertex_coord.length / 3;
+      indexCount += face.tri_indexes.length;
+      uvCount += face.uv_coord.length / 2;
+    }
+    let vertices = new Float32Array(vertexCount * 3);
+    let normals = new Float32Array(vertexCount * 3);
+    let triangles = new Uint32Array(indexCount);
+    let uvs = new Float32Array(uvCount * 2);
+    let colors = new Float32Array(vertexCount * 3);
+    let vInd = 0, vertexOffset = 0, uvOffset = 0, indexOffset = 0, globalFaceIndex = 0;
     let faceMetadata = {};
-    facelist.forEach((face) => {
-      const triangleStart = triangles.length;
-      vertices.push(...face.vertex_coord);
-      normals.push(...face.normal_coord);
-      uvs.push(...face.uv_coord);
+    for (let faceListIndex = 0; faceListIndex < facelist.length; faceListIndex++) {
+      const face = facelist[faceListIndex];
+      const triangleStart = indexOffset;
+      vertices.set(face.vertex_coord, vertexOffset * 3);
+      normals.set(face.normal_coord, vertexOffset * 3);
+      uvs.set(face.uv_coord, uvOffset * 2);
 
-      for (let i = 0; i < face.tri_indexes.length; i += 3) {
-        triangles.push(
-          face.tri_indexes[i + 0] + vInd,
-          face.tri_indexes[i + 1] + vInd,
-          face.tri_indexes[i + 2] + vInd
-        );
+      for (let i = 0; i < face.tri_indexes.length; i++) {
+        triangles[indexOffset + i] = face.tri_indexes[i] + vInd;
       }
 
-      for (let i = 0; i < face.vertex_coord.length; i += 3) {
-        colors.push(face.face_index, globalFaceIndex, 0);
+      const faceVertexCount = face.vertex_coord.length / 3;
+      for (let i = 0; i < faceVertexCount; i++) {
+        const colorOffset = (vertexOffset + i) * 3;
+        colors[colorOffset + 0] = face.face_index;
+        colors[colorOffset + 1] = globalFaceIndex;
+        colors[colorOffset + 2] = 0;
       }
 
-      const triangleEnd = triangles.length - 1;
+      const triangleEnd = indexOffset + face.tri_indexes.length - 1;
       faceMetadata[globalFaceIndex] = {
         localFaceIndex: face.face_index,
         globalFaceIndex,
@@ -349,16 +360,20 @@ class CascadeEnvironment {
         triangleEnd
       };
       globalFaceIndex++;
-      vInd += face.vertex_coord.length / 3;
-    });
+      vInd += faceVertexCount;
+      vertexOffset += faceVertexCount;
+      uvOffset += face.uv_coord.length / 2;
+      indexOffset += face.tri_indexes.length;
+      if ((faceListIndex & 31) === 31) await this._yieldToMainThread();
+    }
 
     let geometry = new THREE.BufferGeometry();
-    geometry.setIndex(triangles);
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    geometry.setAttribute('uv2', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(new THREE.BufferAttribute(triangles, 1));
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setAttribute('uv2', new THREE.BufferAttribute(uvs, 2));
     geometry.computeBoundingSphere();
     geometry.computeBoundingBox();
     let model = new THREE.Mesh(geometry, this.matcapMaterial);
@@ -373,33 +388,39 @@ class CascadeEnvironment {
     group.add(model);
 
     // Add Highlightable Edges to Object
-    let lineVertices = []; let globalEdgeIndices = [];
+    let lineVertexCount = 0;
+    for (const edge of edgelist) lineVertexCount += Math.max(0, ((edge.vertex_coord.length / 3) - 1) * 2);
+    let lineVertices = new Float32Array(lineVertexCount * 3);
+    let globalEdgeIndices = [];
+    let lineVertexOffset = 0;
     let curGlobalEdgeIndex = 0;
     let globalEdgeMetadata = {}; globalEdgeMetadata[-1] = { start: -1, end: -1 };
-    edgelist.forEach((edge) => {
+    for (let edgeListIndex = 0; edgeListIndex < edgelist.length; edgeListIndex++) {
+      const edge = edgelist[edgeListIndex];
       let edgeMetadata = {};
       edgeMetadata.localEdgeIndex = edge.edge_index;
       edgeMetadata.info = edge;
       edgeMetadata.start = globalEdgeIndices.length;
       for (let i = 0; i < edge.vertex_coord.length - 3; i += 3) {
-        lineVertices.push(new THREE.Vector3(
-          edge.vertex_coord[i], edge.vertex_coord[i + 1], edge.vertex_coord[i + 2]
-        ));
-        lineVertices.push(new THREE.Vector3(
-          edge.vertex_coord[i + 3], edge.vertex_coord[i + 1 + 3], edge.vertex_coord[i + 2 + 3]
-        ));
+        lineVertices[lineVertexOffset++] = edge.vertex_coord[i];
+        lineVertices[lineVertexOffset++] = edge.vertex_coord[i + 1];
+        lineVertices[lineVertexOffset++] = edge.vertex_coord[i + 2];
+        lineVertices[lineVertexOffset++] = edge.vertex_coord[i + 3];
+        lineVertices[lineVertexOffset++] = edge.vertex_coord[i + 4];
+        lineVertices[lineVertexOffset++] = edge.vertex_coord[i + 5];
         globalEdgeIndices.push(curGlobalEdgeIndex);
         globalEdgeIndices.push(curGlobalEdgeIndex);
       }
       edgeMetadata.end = globalEdgeIndices.length - 1;
       globalEdgeMetadata[curGlobalEdgeIndex] = edgeMetadata;
       curGlobalEdgeIndex++;
-    });
+      if ((edgeListIndex & 63) === 63) await this._yieldToMainThread();
+    }
 
-    let lineGeometry = new THREE.BufferGeometry().setFromPoints(lineVertices);
-    let lineColors = [];
-    for (let i = 0; i < lineVertices.length; i++) { lineColors.push(0, 0, 0); }
-    lineGeometry.setAttribute('color', new THREE.Float32BufferAttribute(lineColors, 3));
+    let lineGeometry = new THREE.BufferGeometry();
+    lineGeometry.setAttribute('position', new THREE.BufferAttribute(lineVertices, 3));
+    let lineColors = new Float32Array(lineVertexCount * 3);
+    lineGeometry.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
     let lineMaterial = new THREE.LineBasicMaterial({
       color: 0xffffff, linewidth: 4, vertexColors: true
     });
@@ -484,6 +505,10 @@ class CascadeEnvironment {
     return group;
   }
 
+  _yieldToMainThread() {
+    return new Promise(resolve => requestAnimationFrame(resolve));
+  }
+
   _updateMouseFromEvent(event) {
     const rect = this.environment.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -565,7 +590,7 @@ class CascadeEnvironment {
       line.selectEdgeAtLineIndex(hit.index);
       this._selectedEdgeLine = line;
       this._selectedEdgeIndex = metadata.localEdgeIndex;
-      this._app?.provenance?.focusSubshape(metadata.info?.subshapeId, `edge #${metadata.localEdgeIndex}`);
+      this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `edge #${metadata.localEdgeIndex}`);
       console.log(await this._formatSelectedEdge(metadata.localEdgeIndex, metadata.info || {}));
     } else {
       const metadata = hit.object.getFaceMetadataAtTriangle(hit.face);
@@ -579,7 +604,7 @@ class CascadeEnvironment {
           renderOrder: 10
         });
         this.mainObject.add(this._selectedPartMesh);
-        this._app?.provenance?.focusSubshape(metadata.info?.subshapeId, `part #${metadata.partIndex}`);
+        this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `part #${metadata.partIndex}`);
         console.log(await this._formatSelectedPart(metadata.partIndex, metadata.part || metadata.info?.part || null, metadata.info || {}));
       } else {
         this._selectedFaceIndex = metadata.localFaceIndex;
@@ -590,7 +615,7 @@ class CascadeEnvironment {
           renderOrder: 10
         });
         this.mainObject.add(this._selectedFaceMesh);
-        this._app?.provenance?.focusSubshape(metadata.info?.subshapeId, `face #${metadata.localFaceIndex}`);
+        this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `face #${metadata.localFaceIndex}`);
         console.log(await this._formatSelectedFace(metadata.localFaceIndex, metadata.info || {}));
       }
     }

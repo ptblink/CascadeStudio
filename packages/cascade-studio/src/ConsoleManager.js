@@ -24,6 +24,7 @@ class ConsoleManager {
     this._realConsoleInfo = null;
     this._progressLines = new Map();
     this._activeProgressId = null;
+    this._spinners = new Map();
     this._initialized = false;
   }
 
@@ -53,12 +54,14 @@ class ConsoleManager {
     this._consoleContainer.appendChild(this._terminalHost);
 
     this._terminal = new Terminal({
-      convertEol: true,
+      convertEol: false,
       scrollback: 5000,
       fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 14,
       lineHeight: 1.25,
       cursorBlink: false,
+      cursorStyle: 'block',
+      cursorInactiveStyle: 'none',
       disableStdin: true,
       scrollOnUserInput: false,
       theme: {
@@ -84,6 +87,8 @@ class ConsoleManager {
       }
     });
     this._terminal.open(this._terminalHost);
+    this._terminalHost.tabIndex = -1;
+    this._terminalHost.setAttribute('aria-readonly', 'true');
     this._resizeTerminal();
     this._resizeObserver = new ResizeObserver(() => this._resizeTerminal());
     this._resizeObserver.observe(this._terminalHost);
@@ -162,6 +167,7 @@ class ConsoleManager {
   clear() {
     this.logs = [];
     this.errors = [];
+    this._stopAllSpinners();
     this._progressLines.clear();
     this._activeProgressId = null;
     if (this._terminal) {
@@ -179,6 +185,55 @@ class ConsoleManager {
   /** Get the container (for state persistence of imported files). */
   get goldenContainer() { return this._consoleGolden; }
 
+  /** Start a TUI-style spinner that animates on the main thread, independent of worker messages. */
+  startSpinner(id, label, detail = '', options = {}) {
+    const existing = this._spinners.get(id);
+    if (existing) {
+      this.updateSpinner(id, { label, detail });
+      return;
+    }
+    const state = {
+      label,
+      detail,
+      percent: options.percent ?? null,
+      spinner: 0,
+      intervalMs: options.intervalMs || 125,
+      timer: null
+    };
+    const tick = () => {
+      state.spinner++;
+      this.updateProgress(id, state.label, state.detail, state.percent, { spinner: state.spinner });
+    };
+    state.timer = setInterval(tick, state.intervalMs);
+    this._spinners.set(id, state);
+    tick();
+  }
+
+  /** Update latest spinner text; next timer tick paints it. */
+  updateSpinner(id, updates = {}) {
+    const state = this._spinners.get(id);
+    if (!state) return;
+    if (updates.label !== undefined) state.label = updates.label;
+    if (updates.detail !== undefined) state.detail = updates.detail;
+    if (updates.percent !== undefined) state.percent = updates.percent;
+  }
+
+  /** Stop a TUI-style spinner and finish the active line. */
+  stopSpinner(id, options = {}) {
+    const state = this._spinners.get(id);
+    if (!state) return;
+    clearInterval(state.timer);
+    this._spinners.delete(id);
+    const label = options.label ?? state.label;
+    const detail = options.detail ?? state.detail;
+    const percent = options.percent ?? (options.done === false ? state.percent : 100);
+    this.updateProgress(id, label, detail, percent, {
+      done: options.done !== false,
+      level: options.level,
+      spinner: state.spinner + 1
+    });
+  }
+
   /** Update or create a CLI-style progress line. */
   updateProgress(id, label, detail = '', percent = null, options = {}) {
     if (!this._terminal) return;
@@ -195,10 +250,14 @@ class ConsoleManager {
       }
     }
 
+    const spinnerFrames = ['|', '/', '-', '\\'];
+    const spinnerIndex = Number.isFinite(options.spinner) ? options.spinner : Math.floor(Date.now() / 125);
+    const spinner = options.done || normalized === 100 ? '✓' : spinnerFrames[spinnerIndex % spinnerFrames.length];
     let pct = normalized === null ? ' --%' : String(Math.round(normalized)).padStart(3, ' ') + '%';
-    let text = `${label} [${bar}] ${pct}` + (detail ? `  ${detail}` : '');
+    let text = `${label} [${bar}] ${pct} ${spinner}` + (detail ? `  ${detail}` : '');
 
-    this._writeProgressLine(id, (options.done || normalized === 100) ? "success" : "progress", text, options.done || normalized === 100);
+    const level = options.level || ((options.done || normalized === 100) ? "success" : "progress");
+    this._writeProgressLine(id, level, text, options.done || normalized === 100);
   }
 
   /** Override browser console methods and mirror them into xterm.js. */
@@ -236,6 +295,12 @@ class ConsoleManager {
       self._writeConsoleLine("error", messageText);
       self._realConsoleError.apply(console, args);
     };
+  }
+
+  _stopAllSpinners() {
+    for (const id of Array.from(this._spinners.keys())) {
+      this.stopSpinner(id, { done: false });
+    }
   }
 
   _createToolbarButton(label, title, right) {
@@ -306,7 +371,8 @@ class ConsoleManager {
       this._terminal.write('\r\n');
     }
     this._activeProgressId = done ? null : id;
-    this._terminal.write('\r\x1b[2K' + this._formatTerminalRecord(level, text));
+    const record = this._fitTerminalRecord(this._formatTerminalRecord(level, text, { singleLine: true }));
+    this._terminal.write('\r\x1b[2K' + record);
     if (done) this._terminal.write('\r\n');
     this._terminal.scrollToBottom();
   }
@@ -317,7 +383,7 @@ class ConsoleManager {
     this._activeProgressId = null;
   }
 
-  _formatTerminalRecord(level, text) {
+  _formatTerminalRecord(level, text, options = {}) {
     const colors = {
       log: '\x1b[37m',
       info: '\x1b[36m',
@@ -328,12 +394,34 @@ class ConsoleManager {
     };
     const prefix = level === "error" ? "! " : level === "warn" ? "⚠ " : "› ";
     const color = colors[level] || colors.log;
-    const body = this._escapeForTerminal(String(text)).replace(/\r?\n/g, '\r\n  ');
+    const body = this._escapeForTerminal(String(text), options.singleLine).replace(/\r?\n/g, '\r\n  ');
     return `${color}${prefix}${body}\x1b[0m`;
   }
 
-  _escapeForTerminal(text) {
-    return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+  _fitTerminalRecord(record) {
+    const cols = this._terminal?.cols || 80;
+    const maxPrintable = Math.max(1, cols - 1);
+    let printable = 0;
+    let out = '';
+    for (let i = 0; i < record.length; i++) {
+      if (record[i] === '\x1b') {
+        const match = record.slice(i).match(/^\x1b\[[0-9;?]*[A-Za-z]/);
+        if (match) {
+          out += match[0];
+          i += match[0].length - 1;
+          continue;
+        }
+      }
+      if (printable >= maxPrintable) break;
+      out += record[i];
+      printable++;
+    }
+    return out.endsWith('\x1b[0m') ? out : out + '\x1b[0m';
+  }
+
+  _escapeForTerminal(text, singleLine = false) {
+    const cleaned = text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+    return singleLine ? cleaned.replace(/\r?\n/g, ' ') : cleaned;
   }
 
   static _stringifyArgs(args) {

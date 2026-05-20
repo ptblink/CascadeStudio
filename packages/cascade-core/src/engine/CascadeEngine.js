@@ -30,10 +30,12 @@ class CascadeEngine {
     const eventTypes = [
       'log', 'error', 'Progress', 'addSlider', 'addButton',
       'addCheckbox', 'addTextbox', 'addDropdown', 'saveFile',
-      'loadFiles', 'importProgress', 'generatedSTEPImportCode', 'createTransformHandle'
+      'loadFiles', 'importProgress', 'generatedSTEPImportCode', 'createTransformHandle', 'startupProgress',
+      'combineAndRenderShapes'
     ];
     for (const type of eventTypes) {
       this._messageBus.on(type, (payload) => {
+        if (type === 'importProgress' && payload?.done) this._working = false;
         this._emit(type, payload);
       });
     }
@@ -134,8 +136,10 @@ class CascadeEngine {
     return this._messageBus.request('generateSTEPImportCode', { fileName });
   }
 
-  /** Send files to the worker for import. */
+  /** Send files to the worker for import. File read/parse/mesh happens in CAD worker. */
   importFiles(files) {
+    if (!this._ready) throw new Error('CascadeEngine not initialized. Call init() first.');
+    this._working = true;
     this._messageBus.send('loadFiles', files);
   }
 

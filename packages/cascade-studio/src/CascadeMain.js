@@ -6,7 +6,7 @@ import { CascadeEnvironment } from './CascadeView.js';
 import { CascadeEngine, OpenSCADTranspiler } from 'cascade-core';
 import { EditorManager } from './EditorManager.js';
 import { ConsoleManager } from './ConsoleManager.js';
-import { ProvenanceManager } from './ProvenanceManager.js';
+import { GraphManager } from './GraphManager.js';
 import { GUIManager } from './GUIManager.js';
 import { OpenSCADMonaco } from './openscad/OpenSCADMonaco.js';
 import { CascadeAPI } from './CascadeAPI.js';
@@ -65,7 +65,7 @@ class CascadeStudioApp {
     this.engine = null;
     this.editor = null;
     this.console = null;
-    this.provenance = null;
+    this.graph = null;
     this.gui = null;
     this.viewport = null;
     this.api = null;
@@ -82,6 +82,19 @@ class CascadeStudioApp {
   // Backward compatibility: messageBus accessor via engine
   get messageBus() { return this.engine ? this.engine.messageBus : null; }
 
+  /** Update CSS-animated startup status. Spinner runs independently from worker progress messages. */
+  _updateStartupStatus(progress = {}) {
+    const el = document.getElementById('startupStatus');
+    if (!el) return;
+    const textEl = el.querySelector('.topnav-status-text');
+    const percent = Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : null;
+    const pct = percent === null ? '--%' : `${Math.round(percent)}%`;
+    const detail = progress.detail ? ` / ${progress.detail}` : '';
+    if (textEl) textEl.textContent = `${progress.label || 'Loading CAD Kernel'} ${pct}${detail}`;
+    el.classList.toggle('done', !!progress.done || percent === 100);
+    el.classList.toggle('hidden', false);
+  }
+
   /** Start the application: create the engine, wire up events, and initialize. */
   start() {
     // Create the CascadeEngine (wraps Worker + MessageBus)
@@ -91,7 +104,7 @@ class CascadeStudioApp {
     // Create subsystem managers
     this.editor = new EditorManager(this);
     this.console = new ConsoleManager(this);
-    this.provenance = new ProvenanceManager(this);
+    this.graph = new GraphManager(this);
     this.gui = new GUIManager(this);
 
     // Backward compatibility: expose functions to window for inline HTML event handlers
@@ -123,26 +136,76 @@ class CascadeStudioApp {
       this._initFixtureSelect(fixtureSelect);
     }
 
+    // Wire up startup progress before init so early worker loading messages are visible.
+    let startupProgress = { label: 'Loading CAD Kernel', detail: 'starting', percent: 0, spinner: 0 };
+    this._updateStartupStatus(startupProgress);
+    const startupSpinner = setInterval(() => {
+      startupProgress.spinner++;
+      this._updateStartupStatus(startupProgress);
+      this.console.updateProgress('startup', startupProgress.label, startupProgress.detail, startupProgress.percent, startupProgress);
+    }, 125);
+    this.engine.on('startupProgress', (payload) => {
+      startupProgress = { ...startupProgress, ...payload };
+      this._updateStartupStatus(startupProgress);
+      this.console.updateProgress('startup', startupProgress.label, startupProgress.detail, startupProgress.percent, startupProgress);
+      if (payload.done) clearInterval(startupSpinner);
+    });
+    this.engine.on('log', (payload) => { console.log(payload); });
+    this.engine.on('error', (payload) => {
+      window.workerWorking = false;
+      clearInterval(startupSpinner);
+      console.error(payload);
+    });
+
     // Initialize the engine (loads worker + WASM), then start the layout
     this.engine.init().then(() => {
+      clearInterval(startupSpinner);
+      this._updateStartupStatus({ ...startupProgress, percent: 100, detail: 'ready', done: true });
       // The engine is ready — register event handlers and initialize the UI
 
       // Wire up engine events for GUI controls
       this.gui.registerHandlers(this.engine);
 
       // Wire up engine events for console (log, error, progress)
-      this.engine.on('log', (payload) => { console.log(payload); });
-      this.engine.on('error', (payload) => {
-        window.workerWorking = false;
-        console.error(payload);
-      });
       this.engine.on('Progress', (payload) => {
-        this.console.updateProgress('model', 'Generating Model', payload.opType || '', null, { spinner: payload.opNumber });
+        const detail = payload.opType || '';
+        this.console.updateSpinner('model', { label: 'Generating Model', detail });
+        if (!this.console._spinners?.has('model')) {
+          this.console.updateProgress('model', 'Generating Model', detail, null, { spinner: payload.opNumber });
+        }
       });
       this.engine.on('importProgress', (payload) => {
-        this.console.updateProgress('import', payload.label || 'Importing files', payload.detail || '', payload.percent, payload);
+        const label = payload.label || 'Importing files';
+        const detail = payload.detail || '';
+        const percent = Number.isFinite(payload.percent) ? payload.percent : null;
+        if (payload.done) {
+          this.console.stopSpinner('import', {
+            label,
+            detail,
+            percent: 100,
+            done: true,
+            level: /^Import failed/i.test(label) ? 'error' : undefined
+          });
+          window.workerWorking = false;
+          return;
+        }
+        if (!this.console._spinners?.has('import')) {
+          this.console.startSpinner('import', label, detail, { percent });
+        } else {
+          this.console.updateSpinner('import', { label, detail, percent });
+        }
       });
-      this.engine.on('resetWorking', () => { window.workerWorking = false; });
+      this.engine.on('combineAndRenderShapes', async (result) => {
+        const [[faces, edges], sceneOptions] = result || [[], {}];
+        if (this.viewport && faces) {
+          await this.viewport.renderMeshData({ faces, edges }, sceneOptions || {});
+        }
+        this.graph?.refresh();
+      });
+      this.engine.on('resetWorking', () => {
+        window.workerWorking = false;
+        this.console.stopSpinner('model', { detail: 'done' });
+      });
 
       // Wire up engine events for viewport
       this.engine.on('modelHistory', (steps) => {
@@ -269,14 +332,14 @@ class CascadeStudioApp {
               case 'console':
                 this.console.initPanel(container);
                 break;
-              case 'provenance':
+              case 'graph':
                 try {
-                  this.provenance.initPanel(container);
+                  this.graph.initPanel(container);
                 } catch (err) {
-                  element.textContent = `Provenance failed to load: ${err?.message || err}`;
+                  element.textContent = `Graph failed to load: ${err?.message || err}`;
                   element.style.padding = '12px';
                   element.style.color = '#f48771';
-                  console.error('Provenance failed to load', err);
+                  console.error('Graph failed to load', err);
                 }
                 break;
             }
@@ -313,10 +376,10 @@ class CascadeStudioApp {
       });
 
       this._dockviewApi.addPanel({
-        id: 'provenance',
-        component: 'provenance',
-        title: 'Provenance',
-        position: { referencePanel: 'console', direction: 'within', index: 0 },
+        id: 'graph',
+        component: 'graph',
+        title: 'Graph',
+        position: { referencePanel: 'console', direction: 'within', index: 1 },
         inactive: true
       });
       consolePanel.api.setActive();
@@ -354,10 +417,10 @@ class CascadeStudioApp {
       });
 
       this._dockviewApi.addPanel({
-        id: 'provenance',
-        component: 'provenance',
-        title: 'Provenance',
-        position: { referencePanel: 'console', direction: 'within', index: 0 },
+        id: 'graph',
+        component: 'graph',
+        title: 'Graph',
+        position: { referencePanel: 'console', direction: 'within', index: 1 },
         inactive: true
       });
       consolePanel.api.setActive();
@@ -514,9 +577,25 @@ class CascadeStudioApp {
   }
 
   /** Trigger the CAD WebWorker to load one or more .stl, .step, or .iges files. */
-  loadFiles(fileElementID = "files") {
-    let files = document.getElementById(fileElementID).files;
-    this.engine.importFiles(files);
+  async loadFiles(fileElementID = "files") {
+    if (window.workerWorking) { return; }
+    const input = document.getElementById(fileElementID);
+    const files = input?.files;
+    if (!files || files.length === 0) return;
+
+    window.workerWorking = true;
+    this.console.startSpinner('import', 'Importing files', 'queued', { percent: 0 });
+
+    // Let xterm paint first spinner frame before posting work to CAD worker.
+    await new Promise(requestAnimationFrame);
+
+    try {
+      this.engine.importFiles(files);
+    } catch (err) {
+      window.workerWorking = false;
+      this.console.stopSpinner('import', { label: 'Import failed', detail: err?.message || String(err), level: 'error' });
+      console.error("Import failed: " + (err?.message || err));
+    }
   }
 
   /** Create the + button shown after code editor tabs. */

@@ -295,7 +295,8 @@ test.describe('Export, GUI & Console', () => {
     await evaluateNoErrors(page, 'Box(10, 20, 30, true);');
 
     const code = await page.evaluate((name) => window.CascadeAPI.generateSTEPImportCode(name), fixtureName);
-    expect(code).toContain('Generated Approximate Parametric JS');
+    expect(code).toContain('Generated Exact STEP Parts JS');
+    expect(code).toContain('function useStepPart');
 
     const compare = await page.evaluate((name) => window.CascadeAPI.compareCurrentShapeToSTEP(name, 0.25), fixtureName);
 
@@ -369,7 +370,7 @@ test.describe('Everything Example', () => {
     expect(errors).toEqual([]);
   });
 
-  test('container fixture does not emit provenance edge endpoint warnings', async ({ page }) => {
+  test('container fixture does not emit graph edge endpoint warnings', async ({ page }) => {
     const warnings = [];
     page.on('console', (msg) => {
       if (msg.type() === 'warning') { warnings.push(msg.text()); }

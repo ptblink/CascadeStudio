@@ -17,6 +17,7 @@ class CascadeStudioMesher {
   constructor() {
     // Expose meshing methods on self for use by MainWorker
     self.ShapeToMesh = this.shapeToMesh.bind(this);
+    self.PackMeshTransferables = CascadeStudioMesher.packMeshTransferables;
     self.LengthOfCurve = CascadeStudioMesher.lengthOfCurve;
     self.EdgeInfo = CascadeStudioMesher.edgeInfo;
     // Note: ForEachFace/ForEachEdge are assigned to self by CascadeStudioStandardLibrary
@@ -111,6 +112,21 @@ class CascadeStudioMesher {
       midpoint: [mid.X(), mid.Y(), mid.Z()],
       direction
     };
+  }
+
+  static packMeshTransferables(facesAndEdges) {
+    if (!facesAndEdges) return facesAndEdges;
+    const [facelist, edgeList] = facesAndEdges;
+    for (const face of facelist || []) {
+      if (!(face.vertex_coord instanceof Float32Array)) face.vertex_coord = new Float32Array(face.vertex_coord || []);
+      if (!(face.uv_coord instanceof Float32Array)) face.uv_coord = new Float32Array(face.uv_coord || []);
+      if (!(face.normal_coord instanceof Float32Array)) face.normal_coord = new Float32Array(face.normal_coord || []);
+      if (!(face.tri_indexes instanceof Uint32Array)) face.tri_indexes = new Uint32Array(face.tri_indexes || []);
+    }
+    for (const edge of edgeList || []) {
+      if (!(edge.vertex_coord instanceof Float32Array)) edge.vertex_coord = new Float32Array(edge.vertex_coord || []);
+    }
+    return facesAndEdges;
   }
 
   shapeToMesh(shape, maxDeviation, fullShapeEdgeHashes, fullShapeFaceHashes, edgeProvenance = {}, partFaceHashes = {}, partEdgeHashes = {}, partMetadata = {}, faceProvenance = {}, faceMetadataByOccurrence = []) {
@@ -355,7 +371,7 @@ class CascadeStudioMesher {
       }, 0);
     }
 
-    return [facelist, edgeList];
+    return CascadeStudioMesher.packMeshTransferables([facelist, edgeList]);
   }
 }
 

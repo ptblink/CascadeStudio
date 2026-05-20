@@ -73,7 +73,7 @@ class CascadeAPI {
     return {
       workflow: [
         'result = await CascadeAPI.runCode(code) → {success, errors, logs, historySteps}',
-        'await CascadeAPI.getProvenanceGraph() → ops/shapes/subshapes/edges for last run',
+        'await CascadeAPI.getGraph() → ops/shapes/subshapes/edges for last run',
         'await CascadeAPI.traceSubshape("face_...") or explainSelection("edge_...") → creation chain to code',
         'CascadeAPI.setCameraAngle(azimuth, elevation) → 0=front, 90=right; 0=level, 90=top',
         'CascadeAPI.saveScreenshot("model.png") → then Read .playwright-mcp/model.png to view',
@@ -165,21 +165,8 @@ Revolve(profile, 360);`,
 
   evaluate() {
     if (this._evaluatePromise) { return this._evaluatePromise; }
-    this._evaluatePromise = new Promise((resolve) => {
-      // Listen for the engine's resetWorking event which fires when evaluation completes
-      const handler = () => {
-        this._app.engine.off('resetWorking', handler);
-        this._evaluatePromise = null;
-        resolve();
-      };
-      this._app.engine.on('resetWorking', handler);
-      this._app.editor.evaluateCode(false);
-      if (!window.workerWorking) {
-        this._app.engine.off('resetWorking', handler);
-        this._evaluatePromise = null;
-        resolve();
-      }
-    });
+    this._evaluatePromise = Promise.resolve(this._app.editor.evaluateCode(false))
+      .finally(() => { this._evaluatePromise = null; });
     return this._evaluatePromise;
   }
 
@@ -190,9 +177,14 @@ Revolve(profile, 360);`,
     return viewport ? viewport._historySteps.slice() : [];
   }
 
-  /** Return full provenance graph from last run: ops, shapes, subshapes, edges. */
-  getProvenanceGraph() {
+  /** Return full graph from last run: ops, shapes, subshapes, edges. */
+  getGraph() {
     return this._app.engine.getProvenanceGraph();
+  }
+
+  /** Backward-compatible alias. */
+  getProvenanceGraph() {
+    return this.getGraph();
   }
 
   /** Trace one mesh/topology id, e.g. face_123456 or edge_123456. */
