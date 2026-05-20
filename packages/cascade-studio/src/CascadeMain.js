@@ -168,14 +168,12 @@ class CascadeStudioApp {
 
       // Wire up engine events for console (log, error, progress)
       this.engine.on('Progress', (payload) => {
-        const detail = payload.opType || '';
         const spinner = this.console._spinners?.get('model');
-        const currentPercent = Number.isFinite(spinner?.percent) ? spinner.percent : 0;
+        if (!spinner) return;
+        const detail = payload.opType || '';
+        const currentPercent = Number.isFinite(spinner.percent) ? spinner.percent : 0;
         const nextPercent = Math.min(95, Math.max(currentPercent + 1, Math.round((payload.opNumber || 0) * 3)));
         this.console.updateSpinner('model', { label: 'Generating Model', detail, percent: nextPercent });
-        if (!this.console._spinners?.has('model')) {
-          this.console.updateProgress('model', 'Generating Model', detail, nextPercent, { spinner: payload.opNumber });
-        }
       });
       this.engine.on('importProgress', (payload) => {
         const label = payload.label || 'Importing files';

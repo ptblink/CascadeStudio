@@ -364,12 +364,16 @@ class ConsoleManager {
 
   _writeConsoleLine(level, text) {
     if (!this._terminal) return;
+    const message = String(text);
+    if (this._activeProgressId === 'model' && /^(Loaded STEP part:|Generation Complete!)/.test(message)) {
+      this.stopSpinner('model', { detail: 'done' });
+    }
     const active = this._activeProgressId ? this._progressLines.get(this._activeProgressId) : null;
     if (active) {
-      this._terminal.write('\r\x1b[2K' + this._formatTerminalRecord(level, text) + '\r\n');
+      this._terminal.write('\r\x1b[2K' + this._formatTerminalRecord(level, message) + '\r\n');
       this._redrawActiveProgressLine();
     } else {
-      this._terminal.write(this._formatTerminalRecord(level, text) + '\r\n');
+      this._terminal.write(this._formatTerminalRecord(level, message) + '\r\n');
     }
     this._terminal.scrollToBottom();
   }
