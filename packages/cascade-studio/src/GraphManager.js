@@ -46,7 +46,7 @@ class GraphManager {
     this._container.appendChild(toolbar);
 
     this._status = document.createElement('span');
-    this._status.textContent = 'Graph: waiting for model';
+    this._status.textContent = 'Graph: generation disabled';
     this._status.style.fontSize = '12px';
     this._status.style.color = '#cccccc';
     toolbar.appendChild(this._status);
@@ -92,7 +92,7 @@ class GraphManager {
     this._details.style.fontSize = '11px';
     this._details.style.borderLeft = '1px solid #333';
     this._details.style.background = '#181818';
-    this._details.textContent = 'Run code to populate graph.';
+    this._details.textContent = 'Graph view kept. Node/edge generation disabled for now.';
     body.appendChild(this._details);
 
     this._resizeObserver?.disconnect();
@@ -184,8 +184,8 @@ class GraphManager {
     this._lastGraph = null;
     this._focusSubshapeId = null;
     this._focusLabel = null;
-    if (this._status) { this._status.textContent = 'Graph: waiting for model'; }
-    if (this._details) { this._details.textContent = 'Run code to populate graph.'; }
+    if (this._status) { this._status.textContent = 'Graph: generation disabled'; }
+    if (this._details) { this._details.textContent = 'Graph view kept. Node/edge generation disabled for now.'; }
     this._cy?.elements().remove();
   }
 
@@ -265,7 +265,8 @@ class GraphManager {
     const subshapes = graph.subshapes ? Object.keys(graph.subshapes).length : 0;
     const edges = Array.isArray(graph.edges) ? graph.edges.length : 0;
     const prefix = focus ? `Graph: ${focus.label} trace` : 'Graph';
-    this._status.textContent = `${prefix}: ${ops} ops, ${shapes} shapes, ${subshapes} subshapes, ${edges} links`;
+    const disabled = ops === 0 && shapes === 0 && subshapes === 0 && edges === 0;
+    this._status.textContent = disabled ? 'Graph: generation disabled' : `${prefix}: ${ops} ops, ${shapes} shapes, ${subshapes} subshapes, ${edges} links`;
     this._details.textContent = focus ? this._traceSummaryText(focus.trace, graph) : this._summaryText(graph);
 
     if (!this._cy && !this._initGraph()) { return; }
@@ -484,15 +485,16 @@ class GraphManager {
   }
 
   _summaryText(graph) {
-    if (!graph) { return 'Run code to populate graph.'; }
-    return JSON.stringify({
+    if (!graph) { return 'Graph view kept. Node/edge generation disabled for now.'; }
+    const summary = {
       version: graph.version,
       ops: Object.keys(graph.ops || {}).length,
       shapes: Object.keys(graph.shapes || {}).length,
       subshapes: Object.keys(graph.subshapes || {}).length,
       edges: Array.isArray(graph.edges) ? graph.edges.length : 0,
-      hint: 'Click nodes/edges for raw graph data. Drag to pan, scroll to zoom.'
-    }, null, 2);
+      hint: 'Graph view and Cytoscape renderer kept. Node/edge generation disabled for now.'
+    };
+    return JSON.stringify(summary, null, 2);
   }
 }
 

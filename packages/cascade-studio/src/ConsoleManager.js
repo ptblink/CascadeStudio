@@ -365,8 +365,19 @@ class ConsoleManager {
   _writeConsoleLine(level, text) {
     if (!this._terminal) return;
     const message = String(text);
-    if (this._activeProgressId === 'model' && /^(Loaded STEP part:|Generation Complete!)/.test(message)) {
-      this.stopSpinner('model', { detail: 'done' });
+    if (message.startsWith('__CASCADE_STEP_PART_PROGRESS__')) {
+      try {
+        const payload = JSON.parse(message.slice('__CASCADE_STEP_PART_PROGRESS__'.length));
+        const current = Number(payload.current);
+        const total = Number(payload.total);
+        const percent = total > 0 ? (current / total) * 100 : 100;
+        this.updateSpinner('model', {
+          label: 'Loading Parts',
+          detail: payload.label || '',
+          percent
+        });
+      } catch (_) {}
+      return;
     }
     const active = this._activeProgressId ? this._progressLines.get(this._activeProgressId) : null;
     if (active) {

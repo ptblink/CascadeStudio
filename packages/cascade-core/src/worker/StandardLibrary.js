@@ -185,7 +185,7 @@ function Text3D(text, size, height, fontName) {
     if (height === 0) {
       return textFaces[textFaces.length - 1];
     } else {
-      textFaces[textFaces.length - 1].hash = self.stringToHash(textArgs);
+      self.SetShapeHash(textFaces[textFaces.length - 1], self.stringToHash(textArgs));
       let textSolid = Rotate([1, 0, 0], -90, Extrude(textFaces[textFaces.length - 1], [0, 0, height * size]));
       self.sceneShapes = self.Remove(self.sceneShapes, textSolid);
       return textSolid;
@@ -221,7 +221,7 @@ function GetSolidFromCompound(shape, index, keepOriginal) {
       if (i === index) { innerSolid = s; } solidsFound++;
     });
     if (solidsFound === 0) { console.error("NO SOLIDS FOUND IN SHAPE!"); innerSolid = shape; }
-    innerSolid.hash = shape.hash + 1;
+    self.SetShapeHash(innerSolid, self.GetShapeHash(shape) + 1);
     return innerSolid;
   });
 
@@ -276,7 +276,7 @@ function GetWire(shape, index, keepOriginal) {
       if (i === index) { innerWire = s; } wiresFound++;
     });
     if (wiresFound === 0) { console.error("NO WIRES FOUND IN SHAPE!"); innerWire = shape; }
-    innerWire.hash = shape.hash + 1;
+    self.SetShapeHash(innerWire, self.GetShapeHash(shape) + 1);
     return innerWire;
   });
 
@@ -528,7 +528,7 @@ function Difference(mainBody, objectsToSubtract, keepObjects, fuzzValue, keepEdg
       difference = fusor.Shape();
     }
 
-    difference.hash = self.ComputeHash(arguments);
+    self.SetShapeHash(difference, self.ComputeHash(arguments));
     if (GetNumSolidsInCompound(difference) === 1) {
       difference = GetSolidFromCompound(difference, 0);
     }
@@ -860,7 +860,7 @@ function Sketch(startingPoint, plane) {
 
     let wire = this.wireBuilder.Wire();
     if (reversed) { wire = wire.Reversed(); }
-    wire.hash = self.stringToHash(this.argsString);
+    self.SetShapeHash(wire, self.stringToHash(this.argsString));
     this.wires.push(wire);
 
     let faceBuilder = null;
@@ -874,7 +874,7 @@ function Sketch(startingPoint, plane) {
     }
 
     let face = faceBuilder.Face();
-    face.hash = self.stringToHash(this.argsString);
+    self.SetShapeHash(face, self.stringToHash(this.argsString));
     this.faces.push(face);
     return this;
   }
@@ -882,7 +882,7 @@ function Sketch(startingPoint, plane) {
   this.Wire = function (reversed) {
     this.argsString += self.ComputeHash(arguments, true);
     this.applyFillets();
-    this.faces[this.faces.length - 1].hash = self.stringToHash(this.argsString);
+    self.SetShapeHash(this.faces[this.faces.length - 1], self.stringToHash(this.argsString));
     let wire = GetWire(this.faces[this.faces.length - 1]);
     if (reversed) { wire = wire.Reversed(); }
     self.sceneShapes.push(wire);
@@ -893,7 +893,7 @@ function Sketch(startingPoint, plane) {
     this.applyFillets();
     let face = this.faces[this.faces.length - 1];
     if (reversed) { face = face.Reversed(); }
-    face.hash = self.stringToHash(this.argsString);
+    self.SetShapeHash(face, self.stringToHash(this.argsString));
     self.sceneShapes.push(face);
     return face;
   }
@@ -1012,7 +1012,7 @@ function Sketch(startingPoint, plane) {
     let edge = new self.oc.BRepBuilderAPI_MakeEdge_24(new self.oc.Handle_Geom_Curve_2(circle.get())).Edge();
     let wire = new self.oc.BRepBuilderAPI_MakeWire_2(edge).Wire();
     if (reversed) { wire = wire.Reversed(); }
-    wire.hash = self.stringToHash(this.argsString);
+    self.SetShapeHash(wire, self.stringToHash(this.argsString));
     this.wires.push(wire);
 
     let faceBuilder = null;
@@ -1025,7 +1025,7 @@ function Sketch(startingPoint, plane) {
       faceBuilder = new self.oc.BRepBuilderAPI_MakeFace_15(wire, false);
     }
     let face = faceBuilder.Face();
-    face.hash = self.stringToHash(this.argsString);
+    self.SetShapeHash(face, self.stringToHash(this.argsString));
     this.faces.push(face);
     return this;
   }

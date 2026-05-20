@@ -135,7 +135,7 @@ class CascadeStudioFileIO {
       let stepShape = reader.OneShape();
 
         self.externalShapes[fileName] = stepShape;
-      self.externalShapes[fileName].hash = self.stringToHash(fileName);
+      self.SetShapeHash(self.externalShapes[fileName], self.stringToHash(fileName));
       self.externalFileTexts[fileName] = fileText;
       this._extractSubShapes(fileName, stepShape, fileText);
       console.log("STEP shape imported: " + fileName);
@@ -164,7 +164,7 @@ class CascadeStudioFileIO {
       solidSTL.Add(oc.TopoDS_Cast.Shell_1(readShape));
 
       self.externalShapes[fileName] = solidSTL.Solid();
-      self.externalShapes[fileName].hash = self.stringToHash(fileName);
+      self.SetShapeHash(self.externalShapes[fileName], self.stringToHash(fileName));
       console.log("STL shape imported: " + fileName);
 
       oc.FS.unlink("/" + fileName);
@@ -237,7 +237,7 @@ class CascadeStudioFileIO {
       const n = String(index + 1).padStart(3, '0');
       const shapeKey = fileName + '#' + kind + '_' + n;
       self.externalShapes[shapeKey] = shapes[index];
-      self.externalShapes[shapeKey].hash = self.stringToHash(shapeKey);
+      self.SetShapeHash(self.externalShapes[shapeKey], self.stringToHash(shapeKey));
     }
     return this._buildSTEPAnalysis(fileName, rootShape, fileText);
   }
@@ -738,6 +738,8 @@ class CascadeStudioFileIO {
       lines.push('}');
       return lines.join('\n');
     }
+    lines.push('const STEP_PART_TOTAL = ' + (analysis.parts || []).length + ';');
+    lines.push('let STEP_PART_LOADED = 0;');
     lines.push('function useStepPart(source, label, translate = [0, 0, 0], rotate = [0, 0, 0]) {');
     lines.push('  let shape = externalShapes[source];');
     lines.push('  if (!shape) {');
@@ -749,7 +751,9 @@ class CascadeStudioFileIO {
     lines.push('  if (rotate[1]) { shape = Rotate([0, 1, 0], rotate[1], shape); }');
     lines.push('  if (rotate[2]) { shape = Rotate([0, 0, 1], rotate[2], shape); }');
     lines.push('  sceneShapes.push(shape);');
+    lines.push('  STEP_PART_LOADED += 1;');
     lines.push('  console.log("Loaded STEP part: " + label);');
+    lines.push('  console.log("__CASCADE_STEP_PART_PROGRESS__" + JSON.stringify({ current: STEP_PART_LOADED, total: STEP_PART_TOTAL, label }));');
     lines.push('  return shape;');
     lines.push('}', '');
     const partNames = [];

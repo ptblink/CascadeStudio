@@ -304,16 +304,15 @@ class CascadeStudioWorker {
         sceneBuilder.Add(self.currentShape, self.sceneShapes[shapeInd]);
       }
 
-      // Use ShapeToMesh to output triangulated faces and discretized edges to the 3D Viewport
+      // Use ShapeToMesh to output triangulated faces and discretized edges to the 3D Viewport.
+      // Graph generation is intentionally disabled; Graph view/libraries stay for later use.
       postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber++, "opType": "Triangulating Faces" } });
-      let edgeProvenance = this._buildEdgeProvenanceMap(payload.code || '');
-      let faceProvenance = this._buildFaceProvenanceMap(payload.code || '');
-      this._provenanceGraph = this._buildProvenanceGraph(payload.code || '', edgeProvenance, faceProvenance);
+      this._provenanceGraph = this._emptyProvenanceGraph();
       let faceMetadataByOccurrence = this._faceMetadataByOccurrence || [];
       this._faceMetadataByOccurrence = [];
       let facesAndEdges = self.ShapeToMesh(self.currentShape,
-        payload.maxDeviation || 0.1, fullShapeEdgeHashes, fullShapeFaceHashes, edgeProvenance,
-        partFaceHashes, partEdgeHashes, partMetadata, faceProvenance, faceMetadataByOccurrence);
+        payload.maxDeviation || 0.1, fullShapeEdgeHashes, fullShapeFaceHashes, {},
+        partFaceHashes, partEdgeHashes, partMetadata, {}, faceMetadataByOccurrence);
       self.sceneShapes = [];
       postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber, "opType": "" } });
       return [facesAndEdges, payload.sceneOptions];
@@ -323,157 +322,13 @@ class CascadeStudioWorker {
     postMessage({ "type": "Progress", "payload": { "opNumber": self.opNumber, "opType": "" } });
   }
 
-  _makeProvenanceRecord(step, stepIndex, source) {
-    return {
-      opId: `op_${stepIndex}`,
-      historyStepIndex: stepIndex,
-      fnName: step.fnName,
-      lineNumber: step.lineNumber,
-      code: source.code,
-      codeLine: source.codeLine,
-      codeContext: source.codeContext,
-      history: source.history || null,
-      confidence: 'inferred'
-    };
+  _emptyProvenanceGraph() {
+    return { version: 1, ops: {}, shapes: {}, subshapes: {}, edges: [] };
   }
 
-  _buildProvenanceGraph(code, edgeProvenance = {}, faceProvenance = {}) {
-    let lines = String(code || '').split(/\r?\n/);
-    let graph = { version: 1, ops: {}, shapes: {}, subshapes: {}, edges: [] };
-    let previous = new Set();
-    const transformOps = new Set(['Translate', 'Rotate', 'Mirror', 'Scale']);
-    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
-      let step = self.modelHistory[stepIndex];
-      let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
-      source.history = this._getVariableHistory(lines, source.codeLine);
-      let opId = `op_${stepIndex}`;
-      graph.ops[opId] = {
-        opId,
-        fnName: step.fnName,
-        lineNumber: step.lineNumber,
-        codeLine: source.codeLine,
-        code: source.code,
-        codeContext: source.codeContext,
-        shapeCount: step.shapeCount
-      };
-      let current = new Set();
-      for (let shapeIndex = 0; shapeIndex < (step.shapes || []).length; shapeIndex++) {
-        let shape = step.shapes[shapeIndex];
-        if (!shape || !shape.IsNull || shape.IsNull()) continue;
-        let shapeId = `shape_${stepIndex}_${shapeIndex}`;
-        graph.shapes[shapeId] = { shapeId, opId, historyStepIndex: stepIndex, shapeIndex, shapeType: shape.ShapeType?.().value };
-        self.ForEachFace(shape, (faceIndex, face) => {
-          let hash = self.oc.OCJS.HashCode(face, 100000000);
-          let id = `face_${hash}`;
-          current.add(id);
-          let record = faceProvenance[hash] || this._makeProvenanceRecord(step, stepIndex, source);
-          graph.subshapes[id] ||= { subshapeId: id, type: 'FACE', hash, shapeId, index: faceIndex, createdBy: record };
-          graph.edges.push({ from: previous.has(id) ? id : null, to: id, relation: previous.has(id) ? (transformOps.has(step.fnName) ? 'copied' : 'modified') : 'created', opId, confidence: previous.has(id) ? 'matched' : 'inferred' });
-        });
-        self.ForEachEdge(shape, (edgeIndex, edge) => {
-          let hash = self.oc.OCJS.HashCode(edge, 100000000);
-          let id = `edge_${hash}`;
-          current.add(id);
-          let record = edgeProvenance[hash] || this._makeProvenanceRecord(step, stepIndex, source);
-          let info = null;
-          try { info = self.EdgeInfo(edge); } catch (e) {}
-          graph.subshapes[id] ||= { subshapeId: id, type: 'EDGE', hash, shapeId, index: edgeIndex, createdBy: record, metrics: info };
-          graph.edges.push({ from: previous.has(id) ? id : null, to: id, relation: previous.has(id) ? (transformOps.has(step.fnName) ? 'copied' : 'modified') : 'created', opId, confidence: previous.has(id) ? 'matched' : 'inferred' });
-        });
-      }
-      previous = current;
-    }
-    return graph;
-  }
+  getProvenanceGraph() { return this._provenanceGraph || this._emptyProvenanceGraph(); }
 
-  getProvenanceGraph() { return this._provenanceGraph || { version: 1, ops: {}, shapes: {}, subshapes: {}, edges: [] }; }
-
-  traceSubshape(payload) {
-    let subshapeId = typeof payload === 'string' ? payload : payload?.subshapeId;
-    let graph = this.getProvenanceGraph();
-    if (!subshapeId || !graph.subshapes[subshapeId]) return null;
-    let chain = [];
-    let seen = new Set();
-    let cur = subshapeId;
-    let reverseEdges = [...graph.edges].reverse();
-    while (cur && !seen.has(cur)) {
-      seen.add(cur);
-      let matches = reverseEdges.filter(e => e.to === cur);
-      if (!matches.length) break;
-      for (let edge of matches) {
-        let op = graph.ops[edge.opId] || null;
-        chain.push({ subshapeId: cur, from: edge.from, relation: edge.relation, confidence: edge.confidence, opId: edge.opId, fnName: op?.fnName, lineNumber: op?.lineNumber, codeLine: op?.codeLine, code: op?.code });
-      }
-      let next = matches.find(e => e.from && e.from !== cur);
-      cur = next?.from || null;
-    }
-    let first = chain[0];
-    let last = chain[chain.length - 1];
-    return { selected: graph.subshapes[subshapeId], summary: first ? `${graph.subshapes[subshapeId].type} ${first.relation} by ${first.fnName} at line ${first.codeLine || first.lineNumber}; origin ${last?.fnName || 'unknown'} at line ${last?.codeLine || last?.lineNumber || 'unknown'}.` : '', chain };
-  }
-
-  _buildEdgeProvenanceMap(code) {
-    let lines = String(code || '').split(/\r?\n/);
-    let provenance = {};
-    let geometricOrigins = {};
-    const transformOps = new Set(['Translate', 'Rotate', 'Mirror', 'Scale']);
-    const makeRecord = (step, stepIndex, source) => this._makeProvenanceRecord(step, stepIndex, source);
-    const edgeSignature = (edge) => {
-      if (!self.EdgeInfo) return null;
-      try {
-        let info = self.EdgeInfo(edge);
-        return `${info.type}|${Math.round((info.length || 0) * 1e6)}`;
-      } catch (e) {
-        return null;
-      }
-    };
-
-    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
-      let step = self.modelHistory[stepIndex];
-      let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
-      source.history = this._getVariableHistory(lines, source.codeLine);
-      let isTransform = transformOps.has(step.fnName);
-      for (let shape of step.shapes || []) {
-        if (!shape || !shape.IsNull || shape.IsNull()) continue;
-        self.ForEachEdge(shape, (edgeIndex, edge) => {
-          let hash = self.oc.OCJS.HashCode(edge, 100000000);
-          let signature = edgeSignature(edge);
-          let record = (!isTransform || !signature || !geometricOrigins[signature])
-            ? makeRecord(step, stepIndex, source)
-            : geometricOrigins[signature];
-
-          if (!provenance[hash]) provenance[hash] = record;
-          if (!isTransform && signature && !geometricOrigins[signature]) geometricOrigins[signature] = record;
-        });
-      }
-    }
-    return provenance;
-  }
-
-  _buildFaceProvenanceMap(code) {
-    let lines = String(code || '').split(/\r?\n/);
-    let provenance = {};
-    let previousFaceHashes = {};
-    for (let stepIndex = 0; stepIndex < self.modelHistory.length; stepIndex++) {
-      let step = self.modelHistory[stepIndex];
-      let source = this._getSourceReference(lines, step.lineNumber, step.fnName);
-      source.history = this._getVariableHistory(lines, source.codeLine);
-      let record = this._makeProvenanceRecord(step, stepIndex, source);
-      let currentFaceHashes = {};
-      for (let shape of step.shapes || []) {
-        if (!shape || !shape.IsNull || shape.IsNull()) continue;
-        self.ForEachFace(shape, (faceIndex, face) => {
-          let hash = self.oc.OCJS.HashCode(face, 100000000);
-          currentFaceHashes[hash] = true;
-          // History snapshots are cumulative. Attribute only faces that first appear
-          // in this step; otherwise later ops would steal old faces.
-          if (!previousFaceHashes[hash] && !provenance[hash]) provenance[hash] = record;
-        });
-      }
-      previousFaceHashes = currentFaceHashes;
-    }
-    return provenance;
-  }
+  traceSubshape() { return null; }
 
   _getPartSourceReference(lines, shape) {
     let bestStep = null;

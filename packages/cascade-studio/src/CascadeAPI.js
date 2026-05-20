@@ -73,8 +73,8 @@ class CascadeAPI {
     return {
       workflow: [
         'result = await CascadeAPI.runCode(code) → {success, errors, logs, historySteps}',
-        'await CascadeAPI.getGraph() → ops/shapes/subshapes/edges for last run',
-        'await CascadeAPI.traceSubshape("face_...") or explainSelection("edge_...") → creation chain to code',
+        'await CascadeAPI.getGraph() → graph view placeholder (node/edge generation disabled for now)',
+        'CascadeAPI.traceSubshape(...) and explainSelection(...) currently return null while graph generation is disabled',
         'CascadeAPI.setCameraAngle(azimuth, elevation) → 0=front, 90=right; 0=level, 90=top',
         'CascadeAPI.saveScreenshot("model.png") → then Read .playwright-mcp/model.png to view',
         'NEVER use browser_take_screenshot (captures full page UI) or browser_run_code (use setCameraAngle instead)',
@@ -177,7 +177,7 @@ Revolve(profile, 360);`,
     return viewport ? viewport._historySteps.slice() : [];
   }
 
-  /** Return full graph from last run: ops, shapes, subshapes, edges. */
+  /** Return graph placeholder from last run. Node/edge generation disabled for now. */
   getGraph() {
     return this._app.engine.getProvenanceGraph();
   }
@@ -187,12 +187,12 @@ Revolve(profile, 360);`,
     return this.getGraph();
   }
 
-  /** Trace one mesh/topology id, e.g. face_123456 or edge_123456. */
+  /** Trace disabled while graph node/edge generation is disabled. */
   traceSubshape(subshapeId) {
     return this._app.engine.traceSubshape(subshapeId);
   }
 
-  /** Explain selected edge/face by subshape id. Selection UI can pass picked faceSubshapeId/edgeSubshapeId. */
+  /** Explain disabled while graph node/edge generation is disabled. */
   explainSelection(subshapeId) {
     return this.traceSubshape(subshapeId);
   }

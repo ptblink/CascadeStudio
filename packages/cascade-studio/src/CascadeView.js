@@ -240,7 +240,6 @@ class CascadeEnvironment {
       this.fitCamera();
     }
     this.environment.viewDirty = true;
-    console.log("Generation Complete!");
   }
 
   /** Set history steps metadata. Replaces the old "modelHistory" handler. */
@@ -587,11 +586,25 @@ class CascadeEnvironment {
     if (hit.object.type === "LineSegments") {
       const line = hit.object;
       const metadata = line.getEdgeMetadataAtLineIndex(hit.index);
-      line.selectEdgeAtLineIndex(hit.index);
-      this._selectedEdgeLine = line;
-      this._selectedEdgeIndex = metadata.localEdgeIndex;
-      this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `edge #${metadata.localEdgeIndex}`);
-      console.log(await this._formatSelectedEdge(metadata.localEdgeIndex, metadata.info || {}));
+      if (event.altKey && Number.isInteger(metadata.info?.partIndex)) {
+        const model = this._getModelFacesObject();
+        this._selectedPartIndex = metadata.info.partIndex;
+        this._selectedPartMesh = model ? this._buildPartHighlightMesh(model, metadata.info.partIndex, {
+          name: "Selected Part",
+          color: 0x2d6ba6,
+          opacity: 0.35,
+          renderOrder: 10
+        }) : null;
+        if (this._selectedPartMesh) this.mainObject.add(this._selectedPartMesh);
+        this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `part #${metadata.info.partIndex}`);
+        console.log(await this._formatSelectedPart(metadata.info.partIndex, metadata.info.part || null, metadata.info || {}));
+      } else {
+        line.selectEdgeAtLineIndex(hit.index);
+        this._selectedEdgeLine = line;
+        this._selectedEdgeIndex = metadata.localEdgeIndex;
+        this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `edge #${metadata.localEdgeIndex}`);
+        console.log(await this._formatSelectedEdge(metadata.localEdgeIndex, metadata.info || {}));
+      }
     } else {
       const metadata = hit.object.getFaceMetadataAtTriangle(hit.face);
       if (!metadata) return;
@@ -620,6 +633,10 @@ class CascadeEnvironment {
       }
     }
     this.environment.viewDirty = true;
+  }
+
+  _getModelFacesObject() {
+    return this.mainObject?.children?.find((child) => child.type === "Mesh" && child.name === "Model Faces") || null;
   }
 
   _buildFaceHighlightMesh(model, metadata, options = {}) {
@@ -875,12 +892,12 @@ class CascadeEnvironment {
     }
 
     if (this._historyMeshCache[stepIndex]) {
-      this._displayHistoryMesh(this._historyMeshCache[stepIndex]);
+      await this._displayHistoryMesh(this._historyMeshCache[stepIndex]);
       return;
     }
 
     if (step && step.shapeCount === 0) {
-      this._displayHistoryMesh(null);
+      await this._displayHistoryMesh(null);
       return;
     }
 
@@ -893,7 +910,7 @@ class CascadeEnvironment {
       );
       this._historyMeshCache[stepIndex] = meshData;
       if (this._historyCurrentStep === stepIndex) {
-        this._displayHistoryMesh(meshData);
+        await this._displayHistoryMesh(meshData);
       }
     } finally {
       this._historyPending = false;
@@ -901,7 +918,7 @@ class CascadeEnvironment {
   }
 
   /** Display a pre-triangulated history mesh in the scene. */
-  _displayHistoryMesh(meshData) {
+  async _displayHistoryMesh(meshData) {
     if (this._historyObject) {
       this.environment.scene.remove(this._historyObject);
       this._historyObject = null;
@@ -910,7 +927,7 @@ class CascadeEnvironment {
     if (meshData) {
       let [facelist, edgelist] = meshData;
       if (facelist && facelist.length > 0) {
-        this._historyObject = this._buildObjectFromMesh(facelist, edgelist);
+        this._historyObject = await this._buildObjectFromMesh(facelist, edgelist);
         this.environment.scene.add(this._historyObject);
       }
     }
@@ -1045,10 +1062,11 @@ class CascadeEnvironment {
       );
       if (this.environment.controls.state < 0 && hit) {
         let isLine = hit.object.type === "LineSegments";
+        let edgeMetadata = isLine ? hit.object.getEdgeMetadataAtLineIndex(hit.index) : null;
         let faceMetadata = !isLine ? hit.object.getFaceMetadataAtTriangle(hit.face) : null;
-        let isPartHover = !isLine && this._altKeyDown;
+        let isPartHover = this._altKeyDown && (isLine ? Number.isInteger(edgeMetadata?.info?.partIndex) : true);
         let newIndex = isLine
-          ? hit.object.getEdgeMetadataAtLineIndex(hit.index).localEdgeIndex
+          ? (isPartHover ? edgeMetadata.info.partIndex : edgeMetadata.localEdgeIndex)
           : (isPartHover ? faceMetadata?.partIndex : hit.object.geometry.attributes.color.getX(hit.face.a));
         if (this.highlightedObj != hit.object || this.highlightedIndex !== newIndex || this._highlightedPartMode !== isPartHover) {
           this._clearHoverHighlight();
@@ -1056,7 +1074,18 @@ class CascadeEnvironment {
           this.highlightedObj.currentHex = this.highlightedObj.material.color.getHex();
           this.highlightedIndex = newIndex;
           this._highlightedPartMode = isPartHover;
-          if (isLine) {
+          if (isLine && isPartHover) {
+            const model = this._getModelFacesObject();
+            if (model) {
+              this._hoverFaceMesh = this._buildPartHighlightMesh(model, edgeMetadata.info.partIndex, {
+                name: "Hovered Part",
+                color: 0x00e5ff,
+                opacity: 0.55,
+                renderOrder: 9
+              });
+              this.mainObject.add(this._hoverFaceMesh);
+            }
+          } else if (isLine) {
             this.highlightedObj.material.color.setHex(0xffffff);
             this.highlightedObj.highlightEdgeAtLineIndex(hit.index);
           } else if (faceMetadata) {

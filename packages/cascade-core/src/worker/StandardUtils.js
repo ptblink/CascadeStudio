@@ -5,6 +5,7 @@ class CascadeStudioUtils {
   constructor() {
     this.argCache = {};
     this.usedHashes = {};
+    this.shapeHashes = new WeakMap();
     this.opNumber = 0;
     this.currentOp = '';
     this.currentLineNumber = 0;
@@ -19,12 +20,15 @@ class CascadeStudioUtils {
     // Expose instance and methods on self for eval() access
     self.argCache = this.argCache;
     self.usedHashes = this.usedHashes;
+    self.shapeHashes = this.shapeHashes;
     self.opNumber = this.opNumber;
     self.modelHistory = this.modelHistory;
     self.CacheOp = this.CacheOp.bind(this);
     self.CheckCache = this.CheckCache.bind(this);
     self.AddToCache = this.AddToCache.bind(this);
     self.ComputeHash = this.ComputeHash.bind(this);
+    self.SetShapeHash = this.SetShapeHash.bind(this);
+    self.GetShapeHash = this.GetShapeHash.bind(this);
     self.flushHistoryStep = this.flushHistoryStep.bind(this);
     self.recursiveTraverse = CascadeStudioUtils.recursiveTraverse;
     self.Remove = CascadeStudioUtils.Remove;
@@ -63,11 +67,11 @@ class CascadeStudioUtils {
     let check = this.CheckCache(curHash);
     if (check && self.GUIState["Cache?"]) {
       toReturn = check;
-      toReturn.hash = check.hash;
+      this.SetShapeHash(toReturn, this.GetShapeHash(check));
       this.cacheHits = (this.cacheHits || 0) + 1;
     } else {
       toReturn = cacheMiss();
-      toReturn.hash = curHash;
+      this.SetShapeHash(toReturn, curHash);
       if (self.GUIState["Cache?"]) { this.AddToCache(curHash, toReturn); }
       this.cacheMisses = (this.cacheMisses || 0) + 1;
     }
@@ -103,9 +107,23 @@ class CascadeStudioUtils {
 
   /** Adds this `shape` to the cache, indexable by `hash`. */
   AddToCache(hash, shape) {
-    shape.hash = hash;
+    this.SetShapeHash(shape, hash);
     this.argCache[hash] = shape;
     return hash;
+  }
+
+  /** Stores shape metadata without depending on mutable Embind wrappers. */
+  SetShapeHash(shape, hash) {
+    if (!shape || typeof shape !== 'object') return hash;
+    this.shapeHashes.set(shape, hash);
+    try { shape.hash = hash; } catch (_) { /* OpenCascade wrappers may expose readonly properties. */ }
+    return hash;
+  }
+
+  /** Reads shape metadata from side table first, then legacy expando property. */
+  GetShapeHash(shape) {
+    if (!shape || typeof shape !== 'object') return undefined;
+    return this.shapeHashes.has(shape) ? this.shapeHashes.get(shape) : shape.hash;
   }
 
   /** This function computes a 32-bit integer hash given a set of `arguments`.
@@ -147,7 +165,7 @@ class CascadeStudioUtils {
   /** This function returns a version of the `inputArray` without the `objectToRemove`. */
   static Remove(inputArray, objectToRemove) {
     return inputArray.filter((el) => {
-      return el.hash !== objectToRemove.hash ||
+      return self.GetShapeHash(el) !== self.GetShapeHash(objectToRemove) ||
              el.ptr  !== objectToRemove.ptr;
     });
   }
