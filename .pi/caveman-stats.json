@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "updatedAt": "2026-05-20T23:43:29.946Z",
+  "updatedAt": "2026-05-20T23:43:46.882Z",
   "lifetime": {
-    "turns": 1408,
-    "outputTokens": 261778,
-    "estimatedSavedOutputTokens": 486128,
-    "cost": 36.188446000000056
+    "turns": 1410,
+    "outputTokens": 262138,
+    "estimatedSavedOutputTokens": 486797,
+    "cost": 36.216083000000054
   },
   "byDay": {
     "2026-05-18": {
@@ -21,26 +21,26 @@
       "cost": 15.461093999999981
     },
     "2026-05-20": {
-      "turns": 483,
-      "outputTokens": 77384,
-      "estimatedSavedOutputTokens": 143705,
-      "cost": 11.616299000000014
+      "turns": 485,
+      "outputTokens": 77744,
+      "estimatedSavedOutputTokens": 144374,
+      "cost": 11.643936000000014
     }
   },
   "byCwd": {
     "/Users/dev1/Projects/CascadeStudio": {
-      "turns": 1408,
-      "outputTokens": 261778,
-      "estimatedSavedOutputTokens": 486128,
-      "cost": 36.188446000000056
+      "turns": 1410,
+      "outputTokens": 262138,
+      "estimatedSavedOutputTokens": 486797,
+      "cost": 36.216083000000054
     }
   },
   "byMode": {
     "full": {
-      "turns": 1408,
-      "outputTokens": 261778,
-      "estimatedSavedOutputTokens": 486128,
-      "cost": 36.188446000000056
+      "turns": 1410,
+      "outputTokens": 262138,
+      "estimatedSavedOutputTokens": 486797,
+      "cost": 36.216083000000054
     }
   },
   "records": [
@@ -25387,6 +25387,42 @@
       "baselineRatio": 0.35,
       "estimatedNormalOutputTokens": 229,
       "estimatedSavedOutputTokens": 149
+    },
+    {
+      "ts": 1779320619563,
+      "day": "2026-05-20",
+      "cwd": "/Users/dev1/Projects/CascadeStudio",
+      "mode": "full",
+      "active": true,
+      "inputTokens": 544,
+      "outputTokens": 94,
+      "cacheReadTokens": 10752,
+      "cacheWriteTokens": 0,
+      "cost": 0.010915999999999999,
+      "estimatedUsage": false,
+      "usageSource": "openai-gpt",
+      "benchmarkGrounded": true,
+      "baselineRatio": 0.35,
+      "estimatedNormalOutputTokens": 269,
+      "estimatedSavedOutputTokens": 175
+    },
+    {
+      "ts": 1779320626878,
+      "day": "2026-05-20",
+      "cwd": "/Users/dev1/Projects/CascadeStudio",
+      "mode": "full",
+      "active": true,
+      "inputTokens": 673,
+      "outputTokens": 266,
+      "cacheReadTokens": 10752,
+      "cacheWriteTokens": 0,
+      "cost": 0.016721,
+      "estimatedUsage": false,
+      "usageSource": "openai-gpt",
+      "benchmarkGrounded": true,
+      "baselineRatio": 0.35,
+      "estimatedNormalOutputTokens": 760,
+      "estimatedSavedOutputTokens": 494
     }
   ]
 }
