@@ -311,6 +311,7 @@ class CascadeStudioApp {
       createLeftHeaderActionComponent: (group) => this._createCodeTabAddButton(group),
       createComponent: (options) => {
         const element = document.createElement('div');
+        element.style.position = 'relative';
         element.style.width = '100%';
         element.style.height = '100%';
         element.style.overflow = 'hidden';

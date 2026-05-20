@@ -65,7 +65,7 @@ class ConsoleManager {
       disableStdin: true,
       scrollOnUserInput: false,
       theme: {
-        background: '#1e1e1e',
+        background: '#222222',
         foreground: '#eeeeee',
         cursor: '#eeeeee',
         black: '#000000',
@@ -349,12 +349,14 @@ class ConsoleManager {
 
   _resizeTerminal() {
     if (!this._terminal || !this._terminalHost) return;
-    const rect = this._terminalHost.getBoundingClientRect();
+    const style = window.getComputedStyle(this._terminalHost.querySelector('.xterm') || this._terminalHost);
+    const paddingX = parseFloat(style.paddingLeft || '0') + parseFloat(style.paddingRight || '0');
+    const paddingY = parseFloat(style.paddingTop || '0') + parseFloat(style.paddingBottom || '0');
     const dimensions = this._terminal._core?._renderService?.dimensions;
     const cellWidth = dimensions?.css?.cell?.width || 8.4;
     const cellHeight = dimensions?.css?.cell?.height || 17.5;
-    const cols = Math.max(20, Math.floor((rect.width - 16) / cellWidth));
-    const rows = Math.max(2, Math.floor((rect.height - 10) / cellHeight));
+    const cols = Math.max(20, Math.floor((this._terminalHost.clientWidth - paddingX - 2) / cellWidth));
+    const rows = Math.max(2, Math.floor((this._terminalHost.clientHeight - paddingY - 2) / cellHeight));
     this._terminal.resize(cols, rows);
   }
 

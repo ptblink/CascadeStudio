@@ -312,11 +312,14 @@ body {
 
 .cs-console,
 .cs-console-terminal,
-.cs-console-terminal .xterm,
-.cs-console-terminal .xterm-viewport,
-.cs-console-terminal .xterm-screen {
+.cs-console-terminal .xterm {
   width: 100%;
   height: 100%;
+  min-height: 0;
+}
+
+.cs-console-terminal {
+  height: auto;
 }
 
 .cs-console-terminal .xterm {
@@ -326,6 +329,7 @@ body {
 }
 
 .cs-console-terminal .xterm-viewport {
+  background-color: var(--cs-bg-primary) !important;
   overflow-y: auto;
 }
 
