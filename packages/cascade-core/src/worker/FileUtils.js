@@ -226,6 +226,7 @@ class CascadeStudioFileIO {
       }
       rendered.push(shape);
       self.sceneShapes.push(shape);
+      if (self.addHistoryStep) { self.addHistoryStep("Import STEP: " + (part.label || part.id || part.source || "part"), null, rendered.slice()); }
     }
     return rendered.length === 1 ? rendered[0] : rendered;
   }
@@ -734,6 +735,7 @@ class CascadeStudioFileIO {
       lines.push('  console.error("STEP file is not loaded: " + STEP_FILE + ". Import/attach it before running this script.");');
       lines.push('} else {');
       lines.push('  sceneShapes.push(importedAssembly);');
+      lines.push('  if (typeof addHistoryStep === "function") { addHistoryStep("Import STEP: " + STEP_FILE); }');
       lines.push('  console.log("Loaded exact STEP assembly: " + STEP_FILE);');
       lines.push('}');
       return lines.join('\n');
@@ -751,6 +753,7 @@ class CascadeStudioFileIO {
     lines.push('  if (rotate[1]) { shape = Rotate([0, 1, 0], rotate[1], shape); }');
     lines.push('  if (rotate[2]) { shape = Rotate([0, 0, 1], rotate[2], shape); }');
     lines.push('  sceneShapes.push(shape);');
+    lines.push('  if (typeof addHistoryStep === "function") { addHistoryStep("Import STEP: " + label, null, sceneShapes.slice()); }');
     lines.push('  STEP_PART_LOADED += 1;');
     lines.push('  console.log("Loaded STEP part: " + label);');
     lines.push('  console.log("__CASCADE_STEP_PART_PROGRESS__" + JSON.stringify({ current: STEP_PART_LOADED, total: STEP_PART_TOTAL, label }));');

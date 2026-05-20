@@ -30,6 +30,7 @@ class CascadeStudioUtils {
     self.SetShapeHash = this.SetShapeHash.bind(this);
     self.GetShapeHash = this.GetShapeHash.bind(this);
     self.flushHistoryStep = this.flushHistoryStep.bind(this);
+    self.addHistoryStep = this.addHistoryStep.bind(this);
     self.recursiveTraverse = CascadeStudioUtils.recursiveTraverse;
     self.Remove = CascadeStudioUtils.Remove;
     self.isArrayLike = CascadeStudioUtils.isArrayLike;
@@ -91,15 +92,41 @@ class CascadeStudioUtils {
    *  Metadata (volume, surfaceArea) is deferred to avoid O(n²) cost during eval. */
   flushHistoryStep() {
     if (this._pendingHistoryOp) {
-      this.modelHistory.push({
-        fnName: this._pendingHistoryOp.fnName,
-        lineNumber: this._pendingHistoryOp.lineNumber,
-        shapes: [...self.sceneShapes],
-        shapeCount: self.sceneShapes.length,
-      });
-      self.modelHistory = this.modelHistory;
+      this.addHistoryStep(this._pendingHistoryOp.fnName, this._pendingHistoryOp.lineNumber);
       this._pendingHistoryOp = null;
     }
+  }
+
+  /** Immediately append a modeling history step for direct scene mutations
+   *  (for example imported STEP parts that are pushed without CacheOp).
+   *  When `shapesOverride` is supplied, snapshot exactly that prefix. This lets
+   *  generated STEP import history represent "all parts loaded up to this line"
+   *  and ignore later useStepPart() calls. */
+  addHistoryStep(fnName, lineNumber = null, shapesOverride = null) {
+    const shapes = this._snapshotSceneShapes(shapesOverride || self.sceneShapes || []);
+    this.modelHistory.push({
+      fnName,
+      lineNumber: lineNumber ?? CascadeStudioUtils.getCallingLocation()[0],
+      shapes,
+      shapeCount: shapes.length,
+    });
+    self.modelHistory = this.modelHistory;
+  }
+
+  /** Snapshot scene shape handles for later interactive timeline meshing.
+   *  Direct imported STEP handles can otherwise be cleared/reused after final render. */
+  _snapshotSceneShapes(sourceShapes = self.sceneShapes || []) {
+    const snapshot = [];
+    const loc = self.oc && self.oc.TopLoc_Location_1 ? new self.oc.TopLoc_Location_1() : null;
+    for (const shape of sourceShapes) {
+      if (!shape || !shape.IsNull || shape.IsNull()) { continue; }
+      try {
+        snapshot.push(loc && shape.Moved ? shape.Moved(loc, false) : shape);
+      } catch (_) {
+        snapshot.push(shape);
+      }
+    }
+    return snapshot;
   }
 
   /** Returns the cached object if it exists, or null otherwise. */

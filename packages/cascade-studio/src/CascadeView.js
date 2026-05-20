@@ -131,9 +131,10 @@ class CascadeEnvironment {
     // Modeling history timeline state
     this._historySteps = [];       // Metadata from worker: [{fnName, lineNumber, shapeCount, volume, surfaceArea, solidCount}, ...]
     this._historyMeshCache = {};   // stepIndex → [facelist, edgelist]
-    this._historyCurrentStep = -1; // -1 = showing final result (default)
-    this._historyObject = null;    // THREE.Group for the history preview
-    this._historyPending = false;  // True while awaiting worker mesh response
+    this._historyCurrentStep = -1;   // -1 = showing final result (default)
+    this._historyRequestedStep = -1; // Last timeline target requested while async meshing may be pending
+    this._historyObject = null;      // THREE.Group for the history preview
+    this._historyPending = false;    // True while awaiting worker mesh response
     this._lastSceneOptions = {};
 
     // Fit camera on first render so the orbit target centers on the model
@@ -228,6 +229,7 @@ class CascadeEnvironment {
 
     // Reset timeline to show final result
     this._historyCurrentStep = -1;
+    this._historyRequestedStep = -1;
     if (this._historyObject) {
       this.environment.scene.remove(this._historyObject);
       this._historyObject = null;
@@ -247,6 +249,7 @@ class CascadeEnvironment {
     this._historySteps = steps || [];
     this._historyMeshCache = {};
     this._historyCurrentStep = -1;
+    this._historyRequestedStep = -1;
     this._updateTimelineDOM();
   }
 
@@ -558,11 +561,21 @@ class CascadeEnvironment {
     this._selectedPartIndex = -1;
   }
 
+  _getInteractiveObject() {
+    return this._historyObject || (this.mainObject?.visible !== false ? this.mainObject : null);
+  }
+
+  _addSelectionMesh(mesh, sourceObject = null) {
+    const target = sourceObject?.parent || this._getInteractiveObject();
+    if (mesh && target) target.add(mesh);
+  }
+
   async _selectTargetFromEvent(event) {
-    if (!this.mainObject) return;
+    const targetObject = this._getInteractiveObject();
+    if (!targetObject) return;
     this._updateMouseFromEvent(event);
     this.raycaster.setFromCamera(this.mouse, this.environment.camera);
-    const intersects = this.raycaster.intersectObjects(this.mainObject.children);
+    const intersects = this.raycaster.intersectObjects(targetObject.children);
 
     this._clearSelection();
 
@@ -595,7 +608,7 @@ class CascadeEnvironment {
           opacity: 0.35,
           renderOrder: 10
         }) : null;
-        if (this._selectedPartMesh) this.mainObject.add(this._selectedPartMesh);
+        this._addSelectionMesh(this._selectedPartMesh, line);
         this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `part #${metadata.info.partIndex}`);
         console.log(await this._formatSelectedPart(metadata.info.partIndex, metadata.info.part || null, metadata.info || {}));
       } else {
@@ -616,7 +629,7 @@ class CascadeEnvironment {
           opacity: 0.35,
           renderOrder: 10
         });
-        this.mainObject.add(this._selectedPartMesh);
+        this._addSelectionMesh(this._selectedPartMesh, hit.object);
         this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `part #${metadata.partIndex}`);
         console.log(await this._formatSelectedPart(metadata.partIndex, metadata.part || metadata.info?.part || null, metadata.info || {}));
       } else {
@@ -627,7 +640,7 @@ class CascadeEnvironment {
           opacity: 0.35,
           renderOrder: 10
         });
-        this.mainObject.add(this._selectedFaceMesh);
+        this._addSelectionMesh(this._selectedFaceMesh, hit.object);
         this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `face #${metadata.localFaceIndex}`);
         console.log(await this._formatSelectedFace(metadata.localFaceIndex, metadata.info || {}));
       }
@@ -635,8 +648,9 @@ class CascadeEnvironment {
     this.environment.viewDirty = true;
   }
 
-  _getModelFacesObject() {
-    return this.mainObject?.children?.find((child) => child.type === "Mesh" && child.name === "Model Faces") || null;
+  _getModelFacesObject(targetObject = null) {
+    const target = targetObject || this._getInteractiveObject();
+    return target?.children?.find((child) => child.type === "Mesh" && child.name === "Model Faces") || null;
   }
 
   _buildFaceHighlightMesh(model, metadata, options = {}) {
@@ -858,6 +872,7 @@ class CascadeEnvironment {
 
   /** Show the final (fully evaluated) result. */
   _showFinalResult() {
+    this._historyRequestedStep = -1;
     if (this._historyCurrentStep === -1) return;
     this._historyCurrentStep = -1;
 
@@ -877,8 +892,17 @@ class CascadeEnvironment {
 
   /** Show an intermediate history step. Triangulates lazily via engine request. */
   async _showHistoryStep(stepIndex) {
-    if (stepIndex === this._historyCurrentStep) return;
-    if (this._historyPending) return;
+    if (stepIndex < 0 || stepIndex >= this._historySteps.length) {
+      this._showFinalResult();
+      return;
+    }
+
+    this._historyRequestedStep = stepIndex;
+    if (stepIndex === this._historyCurrentStep && !this._historyPending) return;
+    if (this._historyPending) {
+      this._updateTimelineHighlight();
+      return;
+    }
     this._historyCurrentStep = stepIndex;
     this._updateTimelineHighlight();
 
@@ -901,6 +925,13 @@ class CascadeEnvironment {
       return;
     }
 
+    const finalPrefixMesh = this._meshPrefixFromFinal(stepIndex, step);
+    if (finalPrefixMesh) {
+      this._historyMeshCache[stepIndex] = finalPrefixMesh;
+      await this._displayHistoryMesh(finalPrefixMesh);
+      return;
+    }
+
     // Request triangulation from engine
     this._historyPending = true;
     try {
@@ -914,7 +945,38 @@ class CascadeEnvironment {
       }
     } finally {
       this._historyPending = false;
+      if (this._historyRequestedStep !== this._historyCurrentStep) {
+        if (this._historyRequestedStep === -1) {
+          this._showFinalResult();
+        } else {
+          this._showHistoryStep(this._historyRequestedStep);
+        }
+      }
     }
+  }
+
+  /** Return final mesh filtered to parts visible at a history step.
+   *  Keeps useStepPart/import timeline cheap: same meshes, later parts hidden, selection metadata intact. */
+  _meshPrefixFromFinal(stepIndex, step) {
+    if (!this._finalMeshData || !step) return null;
+    const [faces, edges] = this._finalMeshData;
+    if (!Array.isArray(faces) || !Array.isArray(edges)) return null;
+
+    const isVisiblePart = (partIndex, part) => {
+      const sourceStep = part?.source?.historyStepIndex;
+      if (Number.isInteger(sourceStep)) return sourceStep <= stepIndex;
+      if (Number.isInteger(partIndex)) return partIndex < step.shapeCount;
+      return false;
+    };
+
+    const filteredFaces = faces.filter((face) => isVisiblePart(face.partIndex, face.part));
+    if (filteredFaces.length === 0) return null;
+
+    const visibleParts = new Set(filteredFaces
+      .map((face) => face.partIndex)
+      .filter((partIndex) => Number.isInteger(partIndex)));
+    const filteredEdges = edges.filter((edge) => visibleParts.has(edge.partIndex));
+    return [filteredFaces, filteredEdges];
   }
 
   /** Display a pre-triangulated history mesh in the scene. */
@@ -963,8 +1025,9 @@ class CascadeEnvironment {
 
       if (i < this._historySteps.length) {
         let step = this._historySteps[i];
-        dot.textContent = iconMap[step.fnName] || '\u2022';
-        dot.title = `${step.fnName}() — line ${step.lineNumber} (${step.shapeCount} shape${step.shapeCount !== 1 ? 's' : ''})`;
+        const label = step.fnName || 'Step';
+        dot.textContent = iconMap[label] || (label.startsWith('Import STEP:') ? '\u21E9' : '\u2022');
+        dot.title = `${label}${label.startsWith('Import STEP:') ? '' : '()'} — line ${step.lineNumber} (${step.shapeCount} shape${step.shapeCount !== 1 ? 's' : ''})`;
       } else {
         dot.textContent = '\u2713';
         dot.title = 'Final result';
@@ -982,10 +1045,11 @@ class CascadeEnvironment {
     let steps = this._timelineTrack.children;
     for (let i = 0; i < steps.length; i++) {
       let isActive;
-      if (this._historyCurrentStep === -1) {
+      const activeStep = this._historyPending ? this._historyRequestedStep : this._historyCurrentStep;
+      if (activeStep === -1) {
         isActive = (i === steps.length - 1);
       } else {
-        isActive = (i === this._historyCurrentStep);
+        isActive = (i === activeStep);
       }
       steps[i].classList.toggle('cs-timeline-active', isActive);
     }
@@ -1053,9 +1117,10 @@ class CascadeEnvironment {
 
     requestAnimationFrame(() => this._animate());
 
-    if (this.mainObject) {
+    const targetObject = this._getInteractiveObject();
+    if (targetObject) {
       this.raycaster.setFromCamera(this.mouse, this.environment.camera);
-      let intersects = this.raycaster.intersectObjects(this.mainObject.children);
+      let intersects = this.raycaster.intersectObjects(targetObject.children);
       const hit = intersects.find((hit) =>
         hit.object.type === "LineSegments" ||
         (hit.object.type === "Mesh" && hit.object.name === "Model Faces")
@@ -1075,7 +1140,7 @@ class CascadeEnvironment {
           this.highlightedIndex = newIndex;
           this._highlightedPartMode = isPartHover;
           if (isLine && isPartHover) {
-            const model = this._getModelFacesObject();
+            const model = this._getModelFacesObject(hit.object.parent);
             if (model) {
               this._hoverFaceMesh = this._buildPartHighlightMesh(model, edgeMetadata.info.partIndex, {
                 name: "Hovered Part",
@@ -1083,7 +1148,7 @@ class CascadeEnvironment {
                 opacity: 0.55,
                 renderOrder: 9
               });
-              this.mainObject.add(this._hoverFaceMesh);
+              hit.object.parent?.add(this._hoverFaceMesh);
             }
           } else if (isLine) {
             this.highlightedObj.material.color.setHex(0xffffff);
@@ -1102,7 +1167,7 @@ class CascadeEnvironment {
                   opacity: 0.55,
                   renderOrder: 9
                 });
-            this.mainObject.add(this._hoverFaceMesh);
+            hit.object.parent?.add(this._hoverFaceMesh);
           }
           this.environment.viewDirty = true;
         }

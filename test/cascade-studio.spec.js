@@ -297,6 +297,11 @@ test.describe('Export, GUI & Console', () => {
     const code = await page.evaluate((name) => window.CascadeAPI.generateSTEPImportCode(name), fixtureName);
     expect(code).toContain('Generated Exact STEP Parts JS');
     expect(code).toContain('function useStepPart');
+    expect(code).toContain('addHistoryStep("Import STEP: " + label)');
+
+    await evaluateNoErrors(page, code);
+    const history = await page.evaluate(() => window.CascadeAPI.getHistorySteps());
+    expect(history.some(step => step.fnName.startsWith('Import STEP: '))).toBe(true);
 
     const compare = await page.evaluate((name) => window.CascadeAPI.compareCurrentShapeToSTEP(name, 0.25), fixtureName);
 
