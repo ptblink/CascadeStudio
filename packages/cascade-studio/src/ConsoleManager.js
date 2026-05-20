@@ -360,8 +360,13 @@ class ConsoleManager {
 
   _writeConsoleLine(level, text) {
     if (!this._terminal) return;
-    this._finishActiveProgressLine();
-    this._terminal.write(this._formatTerminalRecord(level, text) + '\r\n');
+    const active = this._activeProgressId ? this._progressLines.get(this._activeProgressId) : null;
+    if (active) {
+      this._terminal.write('\r\x1b[2K' + this._formatTerminalRecord(level, text) + '\r\n');
+      this._redrawActiveProgressLine();
+    } else {
+      this._terminal.write(this._formatTerminalRecord(level, text) + '\r\n');
+    }
     this._terminal.scrollToBottom();
   }
 
@@ -370,16 +375,27 @@ class ConsoleManager {
     if (this._activeProgressId && this._activeProgressId !== id) {
       this._terminal.write('\r\n');
     }
-    this._activeProgressId = done ? null : id;
     const record = this._fitTerminalRecord(this._formatTerminalRecord(level, text, { singleLine: true }));
+    this._progressLines.set(id, record);
+    this._activeProgressId = done ? null : id;
     this._terminal.write('\r\x1b[2K' + record);
-    if (done) this._terminal.write('\r\n');
+    if (done) {
+      this._terminal.write('\r\n');
+      this._progressLines.delete(id);
+    }
     this._terminal.scrollToBottom();
+  }
+
+  _redrawActiveProgressLine() {
+    if (!this._activeProgressId) return;
+    const record = this._progressLines.get(this._activeProgressId);
+    if (record) this._terminal.write('\r\x1b[2K' + record);
   }
 
   _finishActiveProgressLine() {
     if (!this._activeProgressId) return;
     this._terminal.write('\r\n');
+    this._progressLines.delete(this._activeProgressId);
     this._activeProgressId = null;
   }
 
