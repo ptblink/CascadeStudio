@@ -17,6 +17,7 @@ class EditorManager {
     this._changeDisposable = null;
     this._copyButton = null;
     this._copyButtonResetTimer = null;
+    this._evaluateButton = null;
     this._clearButton = null;
   }
 
@@ -84,6 +85,10 @@ class EditorManager {
     });
     this.editor = editor;
     window.monacoEditor = editor;
+
+    this._evaluateButton = this._createToolbarButton('Evaluate', 'Evaluate code', '108px');
+    this._evaluateButton.addEventListener('click', () => this.scheduleEvaluate(true, 0));
+    container.element.appendChild(this._evaluateButton);
 
     this._copyButton = this._createToolbarButton('Copy', 'Copy code', '56px');
     this._copyButton.addEventListener('click', () => this.copyCode());
