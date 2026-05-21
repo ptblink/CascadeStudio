@@ -135,6 +135,7 @@ class CascadeEnvironment {
     this._historyRequestedStep = -1; // Last timeline target requested while async meshing may be pending
     this._historyObject = null;      // THREE.Group for the history preview
     this._historyPending = false;    // True while awaiting worker mesh response
+    this._selectedHistoryStep = -1;   // History step that created current scene selection
     this._lastSceneOptions = {};
 
     // Fit camera on first render so the orbit target centers on the model
@@ -250,6 +251,7 @@ class CascadeEnvironment {
     this._historyMeshCache = {};
     this._historyCurrentStep = -1;
     this._historyRequestedStep = -1;
+    this._selectedHistoryStep = -1;
     this._updateTimelineDOM();
   }
 
@@ -559,6 +561,7 @@ class CascadeEnvironment {
     this._selectedFaceIndex = -1;
     this._selectedPartMesh = null;
     this._selectedPartIndex = -1;
+    this._setSelectedHistoryStep(-1);
   }
 
   _getInteractiveObject() {
@@ -610,12 +613,14 @@ class CascadeEnvironment {
         }) : null;
         this._addSelectionMesh(this._selectedPartMesh, line);
         this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `part #${metadata.info.partIndex}`);
+        this._setSelectedHistoryStepFromSelection(metadata.info || {}, metadata.info.partIndex);
         console.log(await this._formatSelectedPart(metadata.info.partIndex, metadata.info.part || null, metadata.info || {}));
       } else {
         line.selectEdgeAtLineIndex(hit.index);
         this._selectedEdgeLine = line;
         this._selectedEdgeIndex = metadata.localEdgeIndex;
         this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `edge #${metadata.localEdgeIndex}`);
+        this._setSelectedHistoryStepFromSelection(metadata.info || {}, metadata.info?.partIndex);
         console.log(await this._formatSelectedEdge(metadata.localEdgeIndex, metadata.info || {}));
       }
     } else {
@@ -631,6 +636,7 @@ class CascadeEnvironment {
         });
         this._addSelectionMesh(this._selectedPartMesh, hit.object);
         this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `part #${metadata.partIndex}`);
+        this._setSelectedHistoryStepFromSelection(metadata.info || {}, metadata.partIndex);
         console.log(await this._formatSelectedPart(metadata.partIndex, metadata.part || metadata.info?.part || null, metadata.info || {}));
       } else {
         this._selectedFaceIndex = metadata.localFaceIndex;
@@ -642,6 +648,7 @@ class CascadeEnvironment {
         });
         this._addSelectionMesh(this._selectedFaceMesh, hit.object);
         this._app?.graph?.focusSubshape(metadata.info?.subshapeId, `face #${metadata.localFaceIndex}`);
+        this._setSelectedHistoryStepFromSelection(metadata.info || {}, metadata.partIndex);
         console.log(await this._formatSelectedFace(metadata.localFaceIndex, metadata.info || {}));
       }
     }
@@ -1040,6 +1047,59 @@ class CascadeEnvironment {
     this._updateTimelineHighlight();
   }
 
+  _setSelectedHistoryStepFromSelection(info = {}, partIndex = null) {
+    const sources = [
+      info.createdBy,
+      info.part?.source,
+      info.source,
+      info.part,
+      ...(Array.isArray(info.history) ? info.history : []),
+      ...(Array.isArray(info.createdBy?.history) ? info.createdBy.history : []),
+      ...(Array.isArray(info.part?.source?.history) ? info.part.source.history : [])
+    ].filter(Boolean);
+
+    for (const source of sources) {
+      if (Number.isInteger(source.historyStepIndex) && source.historyStepIndex >= 0) {
+        this._setSelectedHistoryStep(source.historyStepIndex);
+        return;
+      }
+    }
+
+    for (const source of sources) {
+      const line = source.codeLine ?? source.lineNumber;
+      if (!Number.isInteger(line)) continue;
+      const stepIndex = this._historySteps.findIndex((step) => step.lineNumber === line);
+      if (stepIndex >= 0) {
+        this._setSelectedHistoryStep(stepIndex);
+        return;
+      }
+    }
+
+    const resolvedPartIndex = Number.isInteger(partIndex) ? partIndex : info.partIndex;
+    if (Number.isInteger(resolvedPartIndex)) {
+      const stepIndex = this._historySteps.findIndex((step) => step.shapeCount > resolvedPartIndex);
+      if (stepIndex >= 0) {
+        this._setSelectedHistoryStep(stepIndex);
+        return;
+      }
+    }
+
+    this._setSelectedHistoryStep(-1);
+  }
+
+  _setSelectedHistoryStep(stepIndex) {
+    if (this._selectedHistoryStep === stepIndex) return;
+    this._selectedHistoryStep = stepIndex;
+    this._updateTimelineHighlight();
+    if (stepIndex >= 0) {
+      this._timelineTrack?.children?.[stepIndex]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center'
+      });
+    }
+  }
+
   /** Highlight the current step in the timeline. */
   _updateTimelineHighlight() {
     let steps = this._timelineTrack.children;
@@ -1052,6 +1112,7 @@ class CascadeEnvironment {
         isActive = (i === activeStep);
       }
       steps[i].classList.toggle('cs-timeline-active', isActive);
+      steps[i].classList.toggle('cs-timeline-selected', i === this._selectedHistoryStep);
     }
   }
 

@@ -393,6 +393,12 @@ body {
   box-shadow: 0 0 6px rgba(76, 175, 80, 0.3);
 }
 
+.cs-timeline-step.cs-timeline-selected {
+  color: #00a8ff;
+  background: rgba(0, 168, 255, 0.18);
+  box-shadow: 0 0 10px rgba(0, 168, 255, 0.8);
+}
+
 .cs-timeline-step.cs-timeline-final {
   color: var(--cs-text-secondary);
 }

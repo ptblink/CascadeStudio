@@ -280,7 +280,7 @@ class CascadeStudioWorker {
         }
 
         // Scan the edges and faces and add to the edge list
-        let partSource = this._getPartSourceReference(lines, self.sceneShapes[shapeInd]);
+        let partSource = this._getPartSourceReference(lines, self.sceneShapes[shapeInd], shapeInd);
         partMetadata[shapeInd] = {
           partIndex: shapeInd,
           shapeType: self.sceneShapes[shapeInd].ShapeType().value,
@@ -330,7 +330,7 @@ class CascadeStudioWorker {
 
   traceSubshape() { return null; }
 
-  _getPartSourceReference(lines, shape) {
+  _getPartSourceReference(lines, shape, partIndex = null) {
     let bestStep = null;
     let bestStepIndex = -1;
     let shapeHash = self.oc.OCJS.HashCode(shape, 100000000);
@@ -348,6 +348,8 @@ class CascadeStudioWorker {
     let source = bestStep
       ? this._getSourceReference(lines, bestStep.lineNumber, bestStep.fnName)
       : { codeLine: null, code: '', codeContext: [] };
+    const partSource = this._getStepPartSourceReference(lines, partIndex, bestStep?.fnName);
+    if (partSource?.codeLine) source = partSource;
     let block = this._getSourceBlock(lines, source.codeLine);
     let result = Object.assign({ historyStepIndex: bestStepIndex, fnName: bestStep?.fnName || 'unknown' }, source, { codeBlock: block });
     result.history = this._getVariableHistory(lines, result.codeLine);
@@ -379,6 +381,38 @@ class CascadeStudioWorker {
       });
     }
     return records;
+  }
+
+  _getStepPartSourceReference(lines, partIndex, fnName = '') {
+    if (!Number.isInteger(partIndex)) return null;
+    const padded = String(partIndex).padStart(3, '0');
+    const label = String(fnName || '').replace(/^Import STEP:\s*/, '').trim();
+    const candidates = [
+      new RegExp('^\\s*(?:let|const|var)\\s+solid_' + padded + '\\s*=\\s*useStepPart\\s*\\('),
+      new RegExp('useStepPart\\s*\\([^\\n]*#solid_' + padded + '(?:\\"|\\\')'),
+      label ? new RegExp('useStepPart\\s*\\([^\\n]*' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^\\n]*\\)') : null
+    ].filter(Boolean);
+    for (const pattern of candidates) {
+      for (let i = 0; i < lines.length; i++) {
+        const text = lines[i] || '';
+        if (text.trim().startsWith('//')) continue;
+        if (pattern.test(text)) {
+          return { code: text, codeLine: i + 1, codeContext: this._getCodeContext(lines, i) };
+        }
+      }
+    }
+    return null;
+  }
+
+  _getCodeContext(lines, index) {
+    let start = Math.max(0, index - 2);
+    let end = Math.min(lines.length - 1, index + 2);
+    let codeContext = [];
+    for (let i = start; i <= end; i++) {
+      if ((lines[i] || '').trim().startsWith('//')) continue;
+      codeContext.push({ lineNumber: i + 1, code: lines[i] });
+    }
+    return codeContext;
   }
 
   _getSourceBlock(lines, lineNumber) {
@@ -435,17 +469,10 @@ class CascadeStudioWorker {
       }
     }
 
-    let start = Math.max(0, index - 2);
-    let end = Math.min(lines.length - 1, index + 2);
-    let codeContext = [];
-    for (let i = start; i <= end; i++) {
-      codeContext.push({ lineNumber: i + 1, code: lines[i] });
-    }
-
     return {
       code: codeLine,
       codeLine: index >= 0 ? index + 1 : lineNumber,
-      codeContext
+      codeContext: this._getCodeContext(lines, index)
     };
   }
 
